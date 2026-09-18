@@ -1,0 +1,138 @@
+configuration:
+  name: "GatewayConfiguration"
+
+  mqttSourceBrokerUrl: tcp://mbdo-server.local:1883
+  mqttTargetBrokerUrl: tcp://mbdo-server.local:1883
+
+  mqttInfluxDbRecordings:
+    - name: "Physical_Twin_VGR1"
+      mqttSourceTopic: "PLC/+/VacuumGripper/I1VacuumGripper01/#"
+      dataProcess: extract-json-value
+      timeProcess: extract-json-timestamp
+
+    - name: "Digital_Twin_VGR1"
+      mqttSourceTopic: "gateway/REN_1V_01_VGRSystemModel/#"
+      dataProcess: extract-json-value
+      timeProcess: extract-json-timestamp
+
+  dtEventGroups:
+    - name: "REN_1V_01_VGRSystemModel/input"
+      dataTransformation: clone
+      mqttSourcePrefix: "PLC/+/VacuumGripper/I1VacuumGripper01/measurements/input/"
+      mqttTargetPrefix: "gateway/"
+      dtEvents:
+        - mqttSourceTopic: "vacuumSensVerticalEncoderCounter"
+          mqttTargetTopic: "REN_1V_01_VGRSystemModel/verticalEncoder"
+
+        - mqttSourceTopic: "vacuumSensArmEncoderCounter"
+          mqttTargetTopic: "REN_1V_01_VGRSystemModel/armEncoder"
+
+        - mqttSourceTopic: "vacuumSensRotEncoderCounter"
+          mqttTargetTopic: "REN_1V_01_VGRSystemModel/rotEncoder"
+
+    - name: "REN_1V_01_VGRSystemModel/output"
+      dataTransformation: clone
+      mqttSourcePrefix: "PLC/+/VacuumGripper/I1VacuumGripper01/measurements/output/"
+      mqttTargetPrefix: "gateway/"
+      dtEvents:
+        - mqttSourceTopic: "vacuumActCompressorOn"
+          mqttTargetTopic: "REN_1V_01_VGRSystemModel/vacuumActCompressorOn"
+
+        - mqttSourceTopic: "vacuumActValve"
+          mqttTargetTopic: "REN_1V_01_VGRSystemModel/vacuumActValve"
+
+    - name: "REN_1V_01_VGRSystemModel/internal"
+      dataTransformation: clone
+      mqttSourcePrefix: "PLC/+/VacuumGripper/I1VacuumGripper01/measurements/internal/"
+      mqttTargetPrefix: "gateway/"
+      dtEvents:
+        - mqttSourceTopic: "isExecuting"
+          mqttTargetTopic: "REN_1V_01_VGRSystemModel/isExecuting"
+
+    - name: "TokenLocation/conveyorBelt"
+      dataTransformation: clone
+      mqttSourcePrefix: "PLC/+/ConveyorBelt/I1ConveyorBelt01/measurements/input/"
+      mqttTargetPrefix: "gateway/"
+      dtEvents:
+        - mqttSourceTopic: "conveyorSensFeed"
+          mqttTargetTopic: "TokenLocation/cb/conveyorSensFeed"
+
+        - mqttSourceTopic: "conveyorSensSwap"
+          mqttTargetTopic: "TokenLocation/cb/conveyorSensSwap"
+
+    - name: "TokenLocation/sortingLine"
+      dataTransformation: clone
+      mqttSourcePrefix: "PLC/+/SortingLine/I1SortingLine01/measurements/input/"
+      mqttTargetPrefix: "gateway/"
+      dtEvents:
+        - mqttSourceTopic: "sortingLineSensInputLightBarrier"
+          mqttTargetTopic: "TokenLocation/sl/sensor_SL_in"
+
+        - mqttSourceTopic: "sortingLineSensBlueLightBarrier"
+          mqttTargetTopic: "TokenLocation/sl/sensor_SL_blue"
+
+        - mqttSourceTopic: "sortingLineSensWhiteLightBarrier"
+          mqttTargetTopic: "TokenLocation/sl/sensor_SL_white"
+
+        - mqttSourceTopic: "sortingLineSensRedLightBarrier"
+          mqttTargetTopic: "TokenLocation/sl/sensor_SL_red"
+
+    - name: "TokenLocation/vgr1"
+      dataTransformation: clone
+      mqttSourcePrefix: "PLC/+/VacuumGripper/I1VacuumGripper01/measurements/output/"
+      mqttTargetPrefix: "gateway/"
+      dtEvents:
+        - mqttSourceTopic: "vacuumActCompressorOn"
+          mqttTargetTopic: "TokenLocation/vgr1/vacuumActCompressorOn"
+
+        - mqttSourceTopic: "vacuumActValve"
+          mqttTargetTopic: "TokenLocation/vgr1/vacuumActValve"
+
+    - name: "TokenLocation/vgr2"
+      dataTransformation: clone
+      mqttSourcePrefix: "PLC/+/VacuumGripper/I1VacuumGripper02/measurements/output/"
+      mqttTargetPrefix: "gateway/"
+      dtEvents:
+        - mqttSourceTopic: "vacuumActCompressorOn"
+          mqttTargetTopic: "TokenLocation/vgr2/vacuumActCompressorOn"
+
+        - mqttSourceTopic: "vacuumActValve"
+          mqttTargetTopic: "TokenLocation/vgr2/vacuumActValve"
+
+    - name: "TokenLocation/multiProcessingStation"
+      dataTransformation: clone
+      mqttSourcePrefix: "PLC/+/MultiProcessing/I1MultiProcessing01/measurements/input/"
+      mqttTargetPrefix: "gateway/"
+      dtEvents:
+        - mqttSourceTopic: "sensor_MPS_in"
+          mqttTargetTopic: "TokenLocation/mpo/sensor_MPS_in"
+
+        - mqttSourceTopic: "sensor_MPS_out"
+          mqttTargetTopic: "TokenLocation/mpo/sensor_MPS_out"
+
+
+    - name: "TokenLocation/testFixtures/positioning"
+      dataTransformation: clone
+      mqttSourcePrefix: "TEST/TokenLocation/positioning/"
+      mqttTargetPrefix: "gateway/"
+      dtEvents:
+        - mqttSourceTopic: "encoderTolerance"
+          mqttTargetTopic: "TokenLocation/encoderTolerance"
+
+        - mqttSourceTopic: "vgr1_3DPosition"
+          mqttTargetTopic: "TokenLocation/vgr1/3DPosition"
+
+        - mqttSourceTopic: "vgr1_expected3DPositionBlueOutput"
+          mqttTargetTopic: "TokenLocation/vgr1/expected3DPositionBlueOutput"
+
+        - mqttSourceTopic: "vgr1_expected3DPositionWhiteOutput"
+          mqttTargetTopic: "TokenLocation/vgr1/expected3DPositionWhiteOutput"
+
+        - mqttSourceTopic: "vgr1_expected3DPositionRedOutput"
+          mqttTargetTopic: "TokenLocation/vgr1/expected3DPositionRedOutput"
+
+        - mqttSourceTopic: "vgr2_3DPosition"
+          mqttTargetTopic: "TokenLocation/vgr2/3DPosition"
+
+        - mqttSourceTopic: "vgr2_expected3DPositionCBSwap"
+          mqttTargetTopic: "TokenLocation/vgr2/expected3DPositionCBSwap"
