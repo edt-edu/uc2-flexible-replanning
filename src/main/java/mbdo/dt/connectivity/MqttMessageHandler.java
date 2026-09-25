@@ -8,6 +8,7 @@ import mbdo.dt.connectivity.GatewayServiceConfiguration.MqttInfluxDbRecording;
 import mbdo.dt.data.DigitalShadow;
 import mbdo.dt.domain.DataRequest;
 import mbdo.dt.orchestrator.DtEngine;
+import mbdo.dt.telemetry.MachineTelemetryBridge;
 import mbdo.dt.utils.TimestampParsingUtils;
 import mbdo.dt.utils.TypeDetector;
 import org.eclipse.paho.client.mqttv3.MqttTopic;
@@ -33,17 +34,20 @@ public class MqttMessageHandler implements MessageHandler {
     private final MqttOutboundGateway mqttOutbound;
     private final DigitalShadow digitalShadow;
     private final DtEngine dtEngine;
+    private final MachineTelemetryBridge machineTelemetryBridge;
 
     public MqttMessageHandler(
             GatewayService gatewayService,
             @Qualifier("mqttOutboundGateway") MqttOutboundGateway mqttOutbound,
             DigitalShadow digitalShadow,
-            DtEngine dtEngine
+            DtEngine dtEngine,
+            MachineTelemetryBridge machineTelemetryBridge
     ) {
         this.gatewayService = gatewayService;
         this.mqttOutbound = mqttOutbound;
         this.digitalShadow = digitalShadow;
         this.dtEngine = dtEngine;
+        this.machineTelemetryBridge = machineTelemetryBridge;
     }
 
     @Override
@@ -102,6 +106,7 @@ public class MqttMessageHandler implements MessageHandler {
                     DataRequest request = buildDataRequest(targetTopic, payload);
                     if (request != null) {
                         dtEngine.dispatch(request);
+                        machineTelemetryBridge.onDataRequest(request);
                     }
                 }
             }

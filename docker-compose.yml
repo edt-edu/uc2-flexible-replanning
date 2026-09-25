@@ -15,7 +15,7 @@ services:
       DOCKER_INFLUXDB_INIT_BUCKET: ${INFLUXDB_BUCKET}
       DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUXDB_TOKEN}
     healthcheck:
-      test: ["CMD", "influx", "ping"]
+      test: [ "CMD", "influx", "ping" ]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -42,7 +42,7 @@ services:
       INFLUX_TOKEN: ${INFLUXDB_TOKEN}
       INFLUX_ORG: ${INFLUXDB_ORG}
       INFLUX_BUCKET: ${INFLUXDB_BUCKET}
-      MQTT_BROKER_URL: tcp://mqtt-broker:1883
+      MQTT_BROKER_URL: tcp://localhost:1883
       MQTT_CLIENT_ID: uc2-dt-digital-shadow
       MQTT_TOPICS: "#"
     depends_on:

@@ -1,8 +1,8 @@
 configuration:
   name: "GatewayConfiguration"
 
-  mqttSourceBrokerUrl: tcp://mbdo-server.local:1883
-  mqttTargetBrokerUrl: tcp://mbdo-server.local:1883
+  mqttSourceBrokerUrl: tcp://localhost:1883
+  mqttTargetBrokerUrl: tcp://localhost:1883
 
   mqttInfluxDbRecordings:
     - name: "Physical_Twin_VGR1"

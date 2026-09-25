@@ -5,6 +5,7 @@ import mbdo.dt.domain.AnomalyContext;
 import mbdo.dt.domain.DataRequest;
 import mbdo.dt.services.AnomalyDetection.AnomalyEvaluationResult;
 import mbdo.dt.services.AnomalyReactionService;
+import mbdo.dt.services.NotificationService;
 import mbdo.dt.services.ReplanningService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,11 +21,17 @@ public class AnomalyReactionServiceImpl implements AnomalyReactionService {
 
     private final ReplanningService replanningService;
     private final DigitalShadow digitalShadow;
+    private final NotificationService notificationService;
 
     @Autowired
-    public AnomalyReactionServiceImpl(ReplanningService replanningService, DigitalShadow digitalShadow) {
+    public AnomalyReactionServiceImpl(
+            ReplanningService replanningService,
+            DigitalShadow digitalShadow,
+            NotificationService notificationService
+    ) {
         this.replanningService = replanningService;
         this.digitalShadow = digitalShadow;
+        this.notificationService = notificationService;
     }
 
     @Override
@@ -50,6 +57,13 @@ public class AnomalyReactionServiceImpl implements AnomalyReactionService {
             digitalShadow.recordAnomaly(anomalyContext);
         } catch (RuntimeException e) {
             logger.warn("Failed to record anomaly '{}' in the digital shadow: {}",
+                    anomalyContext.anomalyId(), e.getMessage());
+        }
+
+        try {
+            notificationService.notifyAnomaly(anomalyContext);
+        } catch (RuntimeException e) {
+            logger.warn("Failed to notify anomaly '{}': {}",
                     anomalyContext.anomalyId(), e.getMessage());
         }
 
