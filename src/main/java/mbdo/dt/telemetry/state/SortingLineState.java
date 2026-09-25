@@ -25,7 +25,9 @@ public class SortingLineState extends AbstractMachineState {
     protected void applyAttributeInternal(String normalizedAttribute, Object value) {
         Boolean boolValue = asBoolean(value);
         if (boolValue != null) {
-            if (normalizedAttribute.contains("sortinglinesensinputlightbarrier")) {
+            // Gateway aliases from configuration.yml: sensor_SL_in / _white / _blue / _red.
+            if (normalizedAttribute.contains("sortinglinesensinputlightbarrier")
+                    || normalizedAttribute.equals("sensorslin")) {
                 sortingLineSensInputLightBarrier = boolValue;
                 return;
             }
@@ -33,15 +35,18 @@ public class SortingLineState extends AbstractMachineState {
                 sortingLineSensMiddleLightBarrier = boolValue;
                 return;
             }
-            if (normalizedAttribute.contains("sortinglinesenswhitelightbarrier")) {
+            if (normalizedAttribute.contains("sortinglinesenswhitelightbarrier")
+                    || normalizedAttribute.equals("sensorslwhite")) {
                 sortingLineSensWhiteLightBarrier = boolValue;
                 return;
             }
-            if (normalizedAttribute.contains("sortinglinesensbluelightbarrier")) {
+            if (normalizedAttribute.contains("sortinglinesensbluelightbarrier")
+                    || normalizedAttribute.equals("sensorslblue")) {
                 sortingLineSensBlueLightBarrier = boolValue;
                 return;
             }
-            if (normalizedAttribute.contains("sortinglinesensredlightbarrier")) {
+            if (normalizedAttribute.contains("sortinglinesensredlightbarrier")
+                    || normalizedAttribute.equals("sensorslred")) {
                 sortingLineSensRedLightBarrier = boolValue;
                 return;
             }

@@ -42,6 +42,14 @@ import { MachineTelemetryStore } from '../../stores/machine-telemetry.store';
                             <span class="h-4 w-4 rounded border border-yellow-300" style="background:rgba(255, 255, 0, 0.5)"></span>
                             <span>Light Barrier Sensor</span>
                         </li>
+                        <li class="flex items-center gap-3">
+                            <span class="h-4 w-4 rounded border border-green-300" style="background:rgba(34, 197, 94, 0.75)"></span>
+                            <span>Light Barrier Triggered</span>
+                        </li>
+                        <li class="flex items-center gap-3">
+                            <span class="h-4 w-4 rounded border border-blue-300" style="background:#2563eb"></span>
+                            <span>Gripper Vacuum On</span>
+                        </li>
                     </ul>
                 </div>
             </aside>

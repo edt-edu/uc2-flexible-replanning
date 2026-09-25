@@ -7,26 +7,29 @@ import paho.mqtt.client as mqtt
 DEFAULT_BROKER = "mbdo-server.local"
 DEFAULT_PORT = 1883
 
-SITE = "SIM01"
+# Topics are the ones republished by the platform data-gateway-service
+# (gateway/<setup>/<MachineModel>/<attribute>), so the DT can be driven without PLCs or gateway.
+SETUP = "VIRTUAL_1C1H1M1S2V_01"
+GATEWAY = f"gateway/{SETUP}"
 
 TOPICS = {
 
-    "sl.sensor_SL_in":    f"PLC/{SITE}/SortingLine/I1SortingLine01/measurements/input/sortingLineSensInputLightBarrier",
-    "sl.sensor_SL_blue":  f"PLC/{SITE}/SortingLine/I1SortingLine01/measurements/input/sortingLineSensBlueLightBarrier",
-    "sl.sensor_SL_white": f"PLC/{SITE}/SortingLine/I1SortingLine01/measurements/input/sortingLineSensWhiteLightBarrier",
-    "sl.sensor_SL_red":   f"PLC/{SITE}/SortingLine/I1SortingLine01/measurements/input/sortingLineSensRedLightBarrier",
+    "sl.sensor_SL_in":    f"{GATEWAY}/SLSystemModel/sortingLineSensInputLightBarrier",
+    "sl.sensor_SL_blue":  f"{GATEWAY}/SLSystemModel/sortingLineSensBlueLightBarrier",
+    "sl.sensor_SL_white": f"{GATEWAY}/SLSystemModel/sortingLineSensWhiteLightBarrier",
+    "sl.sensor_SL_red":   f"{GATEWAY}/SLSystemModel/sortingLineSensRedLightBarrier",
 
-    "cb.conveyorSensFeed": f"PLC/{SITE}/ConveyorBelt/I1ConveyorBelt01/measurements/input/conveyorSensFeed",
-    "cb.conveyorSensSwap": f"PLC/{SITE}/ConveyorBelt/I1ConveyorBelt01/measurements/input/conveyorSensSwap",
+    "cb.conveyorSensFeed": f"{GATEWAY}/CBSystemModel/conveyorSensFeed",
+    "cb.conveyorSensSwap": f"{GATEWAY}/CBSystemModel/conveyorSensSwap",
 
-    "vgr1.vacuumActCompressorOn": f"PLC/{SITE}/VacuumGripper/I1VacuumGripper01/measurements/output/vacuumActCompressorOn",
-    "vgr1.vacuumActValve":        f"PLC/{SITE}/VacuumGripper/I1VacuumGripper01/measurements/output/vacuumActValve",
+    "vgr1.vacuumActCompressorOn": f"{GATEWAY}/VGRSystemModel_01/vacuumActCompressorOn",
+    "vgr1.vacuumActValve":        f"{GATEWAY}/VGRSystemModel_01/vacuumActValve",
 
-    "vgr2.vacuumActCompressorOn": f"PLC/{SITE}/VacuumGripper/I1VacuumGripper02/measurements/output/vacuumActCompressorOn",
-    "vgr2.vacuumActValve":        f"PLC/{SITE}/VacuumGripper/I1VacuumGripper02/measurements/output/vacuumActValve",
+    "vgr2.vacuumActCompressorOn": f"{GATEWAY}/VGRSystemModel_02/vacuumActCompressorOn",
+    "vgr2.vacuumActValve":        f"{GATEWAY}/VGRSystemModel_02/vacuumActValve",
 
-    "mpo.sensor_MPS_in":  f"PLC/{SITE}/MultiProcessing/I1MultiProcessing01/measurements/input/sensor_MPS_in",
-    "mpo.sensor_MPS_out": f"PLC/{SITE}/MultiProcessing/I1MultiProcessing01/measurements/input/sensor_MPS_out",
+    "mpo.sensor_MPS_in":  f"{GATEWAY}/MPSystemModel/sensor_MPS_in",
+    "mpo.sensor_MPS_out": f"{GATEWAY}/MPSystemModel/sensor_MPS_out",
 
     "encoderTolerance":                   "TEST/TokenLocation/positioning/encoderTolerance",
     "vgr1.3DPosition":                    "TEST/TokenLocation/positioning/vgr1_3DPosition",

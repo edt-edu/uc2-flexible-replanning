@@ -58,9 +58,9 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
             RuntimeInterpreter runtimeInterpreter,
             StateMachineSelector stateMachineSelector,
             AnomalyReactionService anomalyReactionService,
-            @Value("${anomaly-detection.primary-state-machine:TokenLocation}") String primaryStateMachineName
-    ) {
-        this(System::currentTimeMillis, runtimeInterpreter, stateMachineSelector, anomalyReactionService, primaryStateMachineName);
+            @Value("${anomaly-detection.primary-state-machine:TokenLocation}") String primaryStateMachineName) {
+        this(System::currentTimeMillis, runtimeInterpreter, stateMachineSelector, anomalyReactionService,
+                primaryStateMachineName);
     }
 
     AnomalyDetectionImpl(
@@ -68,8 +68,7 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
             RuntimeInterpreter runtimeInterpreter,
             StateMachineSelector stateMachineSelector,
             AnomalyReactionService anomalyReactionService,
-            String primaryStateMachineName
-    ) {
+            String primaryStateMachineName) {
         this.clockMillis = clockMillis;
         this.runtimeInterpreter = runtimeInterpreter;
         this.stateMachineSelector = stateMachineSelector;
@@ -83,8 +82,8 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
             throw new IllegalStateException("No parsed sysml model was found");
         }
 
-        StateMachineSelector.ModelStateMachine selected =
-                stateMachineSelector.select(parsedModels, primaryStateMachineName);
+        StateMachineSelector.ModelStateMachine selected = stateMachineSelector.select(parsedModels,
+                primaryStateMachineName);
 
         structuralModel = selected.structuralModel();
         behavioralModel = selected.behavioralModel();
@@ -118,8 +117,8 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
         String initialState = activeStateMachine.initialState();
 
         if (initialState == null || initialState.isBlank()) {
-            throw new IllegalStateException("State machine '" + activeStateMachine.name() + "' has no initial state. Expected 'entry; then <State>;' in the SysML model."
-            );
+            throw new IllegalStateException("State machine '" + activeStateMachine.name()
+                    + "' has no initial state. Expected 'entry; then <State>;' in the SysML model.");
         }
 
         currentState = initialState;
@@ -134,9 +133,9 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
     }
 
     @Override
-    public synchronized AnomalyEvaluationResult evaluateObservation(DataRequest triggeringRequest, Map<String, Object> observedValues) {
-        Map<String, Object> safeObservedValues =
-                observedValues == null ? Collections.emptyMap() : observedValues;
+    public synchronized AnomalyEvaluationResult evaluateObservation(DataRequest triggeringRequest,
+            Map<String, Object> observedValues) {
+        Map<String, Object> safeObservedValues = observedValues == null ? Collections.emptyMap() : observedValues;
 
         if (activeStateMachine == null) {
             return nonAnomalyResult(
@@ -144,8 +143,7 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
                     null,
                     null,
                     null,
-                    "No anomaly detection state machine has been loaded."
-            );
+                    "No anomaly detection state machine has been loaded.");
         }
 
         if (currentState == null) {
@@ -154,8 +152,7 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
                     null,
                     null,
                     null,
-                    "The anomaly detection state machine has no current state."
-            );
+                    "The anomaly detection state machine has no current state.");
         }
 
         if (anomalyDetected) {
@@ -164,23 +161,22 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
                     currentState,
                     currentState,
                     null,
-                    "An anomaly has already been detected. Reset is required before continuing."
-            );
+                    "An anomaly has already been detected. Reset is required before continuing.");
         }
 
         String stateBeforeEvaluation = currentState;
 
         AnomalyEvaluationResult result = evaluateCurrentState(safeObservedValues);
 
-        if (logger.isDebugEnabled()) {
-            logger.debug("observation {}={}, state {} -> {}, status={}, {}",
-                    triggeringRequest == null ? null : triggeringRequest.attributeName(),
-                    triggeringRequest == null ? null : triggeringRequest.value(),
-                    stateBeforeEvaluation,
-                    result.currentState(),
-                    result.status(),
-                    result.message());
-        }
+        // if (logger.isDebugEnabled()) {
+        // logger.debug("observation {}={}, state {} -> {}, status={}, {}",
+        // triggeringRequest == null ? null : triggeringRequest.attributeName(),
+        // triggeringRequest == null ? null : triggeringRequest.value(),
+        // stateBeforeEvaluation,
+        // result.currentState(),
+        // result.status(),
+        // result.message());
+        // }
 
         anomalyReactionService.handleDetectedAnomaly(triggeringRequest, result, safeObservedValues);
 
@@ -220,22 +216,19 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
         AnomalyEvaluationResult settledResult = null;
 
         for (int step = 0; step < MAX_CASCADED_TRANSITIONS_PER_OBSERVATION; step++) {
-            AnomalyEvaluationResult durationConstraintResult =
-                    evaluateStateDurationLimit(now);
+            AnomalyEvaluationResult durationConstraintResult = evaluateStateDurationLimit(now);
 
             if (durationConstraintResult != null) {
                 return durationConstraintResult;
             }
 
-            AnomalyEvaluationResult timeoutTransitionResult =
-                    evaluateTimeoutTransitions(now);
+            AnomalyEvaluationResult timeoutTransitionResult = evaluateTimeoutTransitions(now);
 
             if (timeoutTransitionResult != null) {
                 return timeoutTransitionResult;
             }
 
-            AnomalyEvaluationResult guardTransitionResult =
-                    evaluateGuardTransitions(observedValues, now);
+            AnomalyEvaluationResult guardTransitionResult = evaluateGuardTransitions(observedValues, now);
 
             if (guardTransitionResult == null) {
                 return settledResult != null ? settledResult : waitingResult(now);
@@ -258,13 +251,11 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
                 "More than " + MAX_CASCADED_TRANSITIONS_PER_OBSERVATION
                         + " transitions cascaded from a single observation without settling"
                         + " - this looks like a cycle in the state machine rather than a real"
-                        + " sequence of transitions."
-        );
+                        + " sequence of transitions.");
     }
 
     private AnomalyEvaluationResult evaluateTimeoutTransitions(long now) {
-        List<Transition> elapsedTimeTransitions =
-                findElapsedRelativeTimeTransitions(now);
+        List<Transition> elapsedTimeTransitions = findElapsedRelativeTimeTransitions(now);
 
         if (elapsedTimeTransitions.size() == 1) {
             return fireTransition(elapsedTimeTransitions.get(0), now);
@@ -278,8 +269,7 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
                     currentState,
                     currentState,
                     null,
-                    "Several timeout transitions are enabled from state '" + currentState + "'."
-            );
+                    "Several timeout transitions are enabled from state '" + currentState + "'.");
         }
 
         return null;
@@ -287,10 +277,8 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
 
     private AnomalyEvaluationResult evaluateGuardTransitions(
             Map<String, Object> observedValues,
-            long now
-    ) {
-        List<Transition> enabledGuardTransitions =
-                findEnabledGuardTransitions(observedValues);
+            long now) {
+        List<Transition> enabledGuardTransitions = findEnabledGuardTransitions(observedValues);
 
         if (enabledGuardTransitions.size() == 1) {
             return fireTransition(enabledGuardTransitions.get(0), now);
@@ -304,8 +292,7 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
                     currentState,
                     currentState,
                     null,
-                    "Several guard-based transitions are enabled from state '" + currentState + "'."
-            );
+                    "Several guard-based transitions are enabled from state '" + currentState + "'.");
         }
 
         return null;
@@ -324,8 +311,7 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
                 currentState,
                 currentState,
                 null,
-                message
-        );
+                message);
     }
 
     private List<Transition> relativeTimeTransitionsFromCurrentState() {
@@ -375,8 +361,7 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
                     firedTransition.name(),
                     "Timeout deviation. State '" + previousState
                             + "' remained active until relative-time transition '"
-                            + firedTransition.name() + "' fired."
-            );
+                            + firedTransition.name() + "' fired.");
         }
 
         currentState = targetState;
@@ -393,8 +378,7 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
                 currentState,
                 firedTransition.name(),
                 "Transition '" + firedTransition.name() + "' fired: "
-                        + previousState + " -> " + currentState
-        );
+                        + previousState + " -> " + currentState);
     }
 
     private boolean hasRelativeTimeElapsed(Transition transition, long now) {
@@ -436,21 +420,17 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
 
         long elapsedMillis = now - stateEnteredAtMillis;
 
-        for (ConstraintUsage constraintUsage
-                : structuralModel.findConstraintUsagesByType("StateDurationLimit")) {
+        for (ConstraintUsage constraintUsage : structuralModel.findConstraintUsagesByType("StateDurationLimit")) {
 
-            String constrainedStateName =
-                    constraintUsage.inputValues().get("constrainedStateName");
+            String constrainedStateName = constraintUsage.inputValues().get("constrainedStateName");
 
             if (!RuntimeInterpreterUtils.valuesMatch(constrainedStateName, currentState)) {
                 continue;
             }
 
-            String maxDurationExpression =
-                    constraintUsage.inputValues().get("maxDuration");
+            String maxDurationExpression = constraintUsage.inputValues().get("maxDuration");
 
-            Long maxDurationMillis =
-                    RuntimeInterpreterUtils.parseDurationMillisOrNull(maxDurationExpression);
+            Long maxDurationMillis = RuntimeInterpreterUtils.parseDurationMillisOrNull(maxDurationExpression);
 
             if (maxDurationMillis == null) {
                 continue;
@@ -468,8 +448,7 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
                                 + "' violated. State '" + currentState
                                 + "' has been active for " + elapsedMillis
                                 + " ms, but the maximum allowed duration is "
-                                + maxDurationMillis + " ms."
-                );
+                                + maxDurationMillis + " ms.");
             }
         }
 
@@ -516,8 +495,7 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
             String currentState,
             String transitionName,
             String message,
-            AnomalyContext anomalyContext
-    ) {
+            AnomalyContext anomalyContext) {
         return new AnomalyEvaluationResult(
                 status,
                 activeStateMachineId,
@@ -526,8 +504,7 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
                 currentState,
                 transitionName,
                 message,
-                anomalyContext
-        );
+                anomalyContext);
     }
 
     private AnomalyEvaluationResult anomalyResult(
@@ -535,16 +512,14 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
             String previousState,
             String currentState,
             String transitionName,
-            String message
-    ) {
+            String message) {
         String affectedComponent = StateMachineInferenceUtils.inferAffectedComponent(activeStateMachine, previousState);
 
         if (affectedComponent == null) {
             logger.warn(
                     "Could not infer a unique affectedComponent from source state '{}' in state machine '{}'. Replanning will receive a null component.",
                     previousState,
-                    activeStateMachineId
-            );
+                    activeStateMachineId);
         }
 
         AnomalyContext anomalyContext = new AnomalyContext(
@@ -555,8 +530,7 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
                 affectedComponent,
                 previousState,
                 currentState,
-                message
-        );
+                message);
 
         return buildResult(status, previousState, currentState, transitionName, message, anomalyContext);
     }
@@ -566,8 +540,7 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
             String previousState,
             String currentState,
             String transitionName,
-            String message
-    ) {
+            String message) {
         return buildResult(status, previousState, currentState, transitionName, message, null);
     }
 }

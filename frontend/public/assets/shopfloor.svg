@@ -110,6 +110,33 @@
             font-family: sans-serif;
             font-size: 14px;
         }
+
+        .lightBarrier.active {
+            fill: #22c55e;
+            fill-opacity: 0.75;
+        }
+
+        .storage.active {
+            fill: #93c5fd;
+        }
+
+        .slider.active {
+            fill: #f59e0b;
+        }
+
+        .sawActive {
+            stroke: #dc2626 !important;
+            stroke-width: 2;
+        }
+
+        .gripperActive {
+            fill: #2563eb !important;
+        }
+
+        .armLowered {
+            stroke: #2563eb !important;
+            stroke-dasharray: 6 3;
+        }
     </style>
     <defs>
         <pattern x="0" y="0" width="24" height="24" patternUnits="userSpaceOnUse" id="beltPatternCBSystemModel"
@@ -120,6 +147,10 @@
             </rect>
             <rect width="4" height="24" x="14" y="0" fill="#838383">
             </rect>
+            <animateTransform id="beltForwardCBSystemModel" attributeName="patternTransform" type="translate"
+                from="0 0" to="24 0" dur="0.8s" begin="indefinite" repeatCount="indefinite" />
+            <animateTransform id="beltBackwardCBSystemModel" attributeName="patternTransform" type="translate"
+                from="0 0" to="-24 0" dur="0.8s" begin="indefinite" repeatCount="indefinite" />
         </pattern>
         <mask id="SvgjsMask1000">
             <rect width="128" height="320" fill="white" x="110" y="56">
@@ -269,9 +300,9 @@
             </rect>
         </g>
         <g>
-            <rect width="72" height="15" x="125" y="325" class="lightBarrier">
+            <rect width="72" height="15" x="125" y="325" id="inputBarrierHBWSystemModel" class="lightBarrier">
             </rect>
-            <rect width="72" height="15" x="125" y="222" class="lightBarrier">
+            <rect width="72" height="15" x="125" y="222" id="outputBarrierHBWSystemModel" class="lightBarrier">
             </rect>
         </g>
         <g id="ArmArmAccessZoneHBWSystemModel">
@@ -364,9 +395,9 @@
             </rect>
         </g>
         <g>
-            <rect width="120" height="15" x="300" y="58" class="lightBarrier">
+            <rect width="120" height="15" x="300" y="58" id="sensorInMPSystemModel" class="lightBarrier">
             </rect>
-            <rect width="96" height="15" x="10" y="42" class="lightBarrier">
+            <rect width="96" height="15" x="10" y="42" id="sensorOutMPSystemModel" class="lightBarrier">
             </rect>
         </g>
         <g id="ArmArmAccessZoneMPSystemModel">

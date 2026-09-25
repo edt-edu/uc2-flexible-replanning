@@ -32,15 +32,18 @@ public class ConveyorBeltState extends AbstractMachineState {
             isExecuting = boolValue;
             return;
         }
-        if (normalizedAttribute.contains("sensorfeed") && boolValue != null) {
+        if ((normalizedAttribute.contains("sensorfeed") || normalizedAttribute.contains("sensfeed"))
+                && boolValue != null) {
             sensorFeed = boolValue;
             return;
         }
-        if (normalizedAttribute.contains("sensorswap") && boolValue != null) {
+        if ((normalizedAttribute.contains("sensorswap") || normalizedAttribute.contains("sensswap"))
+                && boolValue != null) {
             sensorSwap = boolValue;
             return;
         }
-        if (normalizedAttribute.contains("sensorimpulse") && boolValue != null) {
+        if ((normalizedAttribute.contains("sensorimpulse") || normalizedAttribute.contains("sensimpulse"))
+                && boolValue != null) {
             sensorImpulse = boolValue;
         }
     }

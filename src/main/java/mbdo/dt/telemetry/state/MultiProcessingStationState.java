@@ -8,6 +8,8 @@ public class MultiProcessingStationState extends AbstractMachineState {
     private boolean sawEnabled;
     private double sawRotation;
     private boolean sliderExtended;
+    private boolean sensorIn;
+    private boolean sensorOut;
 
     public MultiProcessingStationState(String machineId) {
         super(machineId);
@@ -30,6 +32,15 @@ public class MultiProcessingStationState extends AbstractMachineState {
                 sliderExtended = boolValue;
                 return;
             }
+            // Gateway aliases from configuration.yml: sensor_MPS_in / sensor_MPS_out.
+            if (normalizedAttribute.equals("sensormpsin")) {
+                sensorIn = boolValue;
+                return;
+            }
+            if (normalizedAttribute.equals("sensormpsout")) {
+                sensorOut = boolValue;
+                return;
+            }
         }
 
         Double numberValue = asDouble(value);
@@ -44,6 +55,8 @@ public class MultiProcessingStationState extends AbstractMachineState {
         state.put("sawEnabled", sawEnabled);
         state.put("sawRotation", sawRotation);
         state.put("sliderExtended", sliderExtended);
+        state.put("sensorIn", sensorIn);
+        state.put("sensorOut", sensorOut);
         return withCommonState(state);
     }
 }

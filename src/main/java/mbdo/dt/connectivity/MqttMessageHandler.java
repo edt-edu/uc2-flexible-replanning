@@ -14,7 +14,6 @@ import mbdo.dt.utils.TypeDetector;
 import org.eclipse.paho.client.mqttv3.MqttTopic;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.integration.mqtt.support.MqttHeaders;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageHandler;
@@ -22,6 +21,7 @@ import org.springframework.messaging.MessagingException;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.List;
 
 @Component
@@ -31,20 +31,17 @@ public class MqttMessageHandler implements MessageHandler {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private final GatewayService gatewayService;
-    private final MqttOutboundGateway mqttOutbound;
     private final DigitalShadow digitalShadow;
     private final DtEngine dtEngine;
     private final MachineTelemetryBridge machineTelemetryBridge;
 
     public MqttMessageHandler(
             GatewayService gatewayService,
-            @Qualifier("mqttOutboundGateway") MqttOutboundGateway mqttOutbound,
             DigitalShadow digitalShadow,
             DtEngine dtEngine,
             MachineTelemetryBridge machineTelemetryBridge
     ) {
         this.gatewayService = gatewayService;
-        this.mqttOutbound = mqttOutbound;
         this.digitalShadow = digitalShadow;
         this.dtEngine = dtEngine;
         this.machineTelemetryBridge = machineTelemetryBridge;
@@ -63,14 +60,29 @@ public class MqttMessageHandler implements MessageHandler {
         String payload = extractPayload(message.getPayload());
 
         try {
-            applyCloneRules(topic, payload);
+            applyMachineTelemetry(topic, payload);
+            applyDtMappingRules(topic, payload);
             applyMqttToInfluxDBRules(topic, payload);
         } catch (RuntimeException e) {
             logger.warn("Failed to process MQTT message on topic '{}': {}", topic, e.getMessage());
         }
     }
 
-    protected void applyCloneRules(String topic, String payload) {
+    /** Pushes every platform gateway measurement to the shopfloor UI, whether or not the DT model uses it. */
+    protected void applyMachineTelemetry(String topic, String payload) {
+        String filter = gatewayService.getMachineTelemetryTopicFilter();
+        if (topic == null || filter == null || !MqttTopic.isMatched(filter, topic)) {
+            return;
+        }
+
+        Measurement measurement = parseMeasurement(topic, payload);
+        if (measurement != null) {
+            machineTelemetryBridge.onGatewayMeasurement(topic, measurement.value(), measurement.timestamp());
+        }
+    }
+
+    /** Maps gateway measurements onto SysML model attributes and dispatches them to the DT engine. */
+    protected void applyDtMappingRules(String topic, String payload) {
         if (topic == null) {
             return;
         }
@@ -87,11 +99,7 @@ public class MqttMessageHandler implements MessageHandler {
                 continue;
             }
 
-            if (eventGroup.mqttSourcePrefix() == null || eventGroup.mqttTargetPrefix() == null) {
-                continue;
-            }
-
-            if (eventGroup.dtEvents() == null) {
+            if (eventGroup.mqttSourcePrefix() == null || eventGroup.dtEvents() == null) {
                 continue;
             }
 
@@ -99,14 +107,9 @@ public class MqttMessageHandler implements MessageHandler {
                 String ruleSourceTopic = eventGroup.mqttSourcePrefix() + dtEvent.mqttSourceTopic();
 
                 if (MqttTopic.isMatched(ruleSourceTopic, topic)) {
-                    String targetTopic = eventGroup.mqttTargetPrefix() + dtEvent.mqttTargetTopic();
-
-                    mqttOutbound.sendToMqtt(targetTopic, payload);
-
-                    DataRequest request = buildDataRequest(targetTopic, payload);
+                    DataRequest request = buildDataRequest(topic, dtEvent.mqttTargetTopic(), payload);
                     if (request != null) {
                         dtEngine.dispatch(request);
-                        machineTelemetryBridge.onDataRequest(request);
                     }
                 }
             }
@@ -138,18 +141,35 @@ public class MqttMessageHandler implements MessageHandler {
         }
     }
 
-    private DataRequest buildDataRequest(String targetTopic, String payload) {
+    private record Measurement(Object value, Long timestamp) {
+    }
+
+    /**
+     * @param modelTarget "&lt;SysML model&gt;/&lt;attribute path&gt;", e.g. "TokenLocation/vgr2/vacuumActValve"
+     *                    becomes model "TokenLocation" and attribute "vgr2.vacuumActValve".
+     */
+    private DataRequest buildDataRequest(String sourceTopic, String modelTarget, String payload) {
+        String[] parts = modelTarget == null ? new String[0] : modelTarget.split("/");
+
+        if (parts.length < 2) {
+            logger.warn("Mapping target has fewer than 2 segments, " +
+                    "cannot extract model/attribute: {}", modelTarget);
+            return null;
+        }
+
+        Measurement measurement = parseMeasurement(sourceTopic, payload);
+        if (measurement == null) {
+            return null;
+        }
+
+        String modelName = parts[0];
+        String attributeName = String.join(".", Arrays.copyOfRange(parts, 1, parts.length));
+
+        return new DataRequest(sourceTopic, modelName, attributeName, measurement.value(), measurement.timestamp());
+    }
+
+    private Measurement parseMeasurement(String topic, String payload) {
         try {
-            String[] parts = targetTopic.split("/");
-
-            if (parts.length < 3) {
-                logger.warn("Target topic has fewer than 3 segments, " +
-                        "cannot extract model/attribute: {}", targetTopic);
-                return null;
-            }
-
-            String modelName = parts[1];
-            String attributeName = extractAttributeNameFromTargetTopic(parts);
             JsonNode json = OBJECT_MAPPER.readTree(payload);
 
             Object value = null;
@@ -165,37 +185,17 @@ public class MqttMessageHandler implements MessageHandler {
                 } else {
                     timestamp = TimestampParsingUtils.parseEpochMillisOrNull(tsNode.asText());
                     if (timestamp == null) {
-                        logger.debug("Unparseable timestamp ignored for topic: {}",
-                                targetTopic);
+                        logger.debug("Unparseable timestamp ignored for topic: {}", topic);
                     }
                 }
             }
 
-            return new DataRequest(targetTopic, modelName, attributeName, value, timestamp);
+            return new Measurement(value, timestamp);
 
         } catch (Exception e) {
-            logger.warn("Failed to build DataRequest for topic '{}': {}",
-                    targetTopic, e.getMessage());
+            logger.warn("Failed to parse payload on topic '{}': {}", topic, e.getMessage());
             return null;
         }
-    }
-
-    private String extractAttributeNameFromTargetTopic(String[] parts) {
-        if (parts.length == 3) {
-            return parts[2];
-        }
-
-        StringBuilder attributeName = new StringBuilder();
-
-        for (int i = 2; i < parts.length; i++) {
-            if (attributeName.length() > 0) {
-                attributeName.append(".");
-            }
-
-            attributeName.append(parts[i]);
-        }
-
-        return attributeName.toString();
     }
 
     private String extractPayload(Object payload) {

@@ -40,7 +40,8 @@ public class VacuumGripperState extends AbstractMachineState {
     protected void applyAttributeInternal(String normalizedAttribute, Object value) {
         Boolean boolValue = asBoolean(value);
         if (boolValue != null) {
-            if (normalizedAttribute.contains("gripperstate")) {
+            // vacuumActValve: the valve holds the vacuum, i.e. the gripper is holding a workpiece.
+            if (normalizedAttribute.contains("gripperstate") || normalizedAttribute.contains("vacuumactvalve")) {
                 gripperState = boolValue;
                 return;
             }
@@ -56,18 +57,16 @@ public class VacuumGripperState extends AbstractMachineState {
 
         Double numberValue = asDouble(value);
         if (numberValue != null) {
-            if (normalizedAttribute.contains("verticalencodercounter")
-                    || normalizedAttribute.contains("vacuumsensverticalencodercounter")) {
+            // Matches both the raw PLC names (vacuumSens*EncoderCounter) and the gateway aliases (*Encoder).
+            if (normalizedAttribute.contains("verticalencoder")) {
                 applyVerticalCounter(numberValue);
                 return;
             }
-            if (normalizedAttribute.contains("armencodercounter")
-                    || normalizedAttribute.contains("vacuumsensarmencodercounter")) {
+            if (normalizedAttribute.contains("armencoder")) {
                 applyArmCounter(numberValue);
                 return;
             }
-            if (normalizedAttribute.contains("rotencodercounter")
-                    || normalizedAttribute.contains("vacuumsensrotencodercounter")) {
+            if (normalizedAttribute.contains("rotencoder")) {
                 applyRotationCounter(numberValue);
                 return;
             }

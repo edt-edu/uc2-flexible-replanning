@@ -1,12 +1,11 @@
 package mbdo.dt.telemetry;
 
-import mbdo.dt.domain.DataRequest;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
 
 /**
- * Feeds the shopfloor machine-state registry/SSE stream from the existing MQTT pipeline,
+ * Feeds the shopfloor machine-state registry/SSE stream from the platform gateway topics,
  * decoupled from {@link mbdo.dt.orchestrator.DtEngine}'s anomaly/replanning simulation.
  */
 @Component
@@ -26,20 +25,16 @@ public class MachineTelemetryBridge {
         this.machineTelemetrySseService = machineTelemetrySseService;
     }
 
-    public void onDataRequest(DataRequest request) {
-        if (request == null) {
-            return;
-        }
-
-        machineIdResolver.resolve(request).ifPresent(machineAttribute -> {
-            Instant timestamp = request.timestamp() != null
-                    ? Instant.ofEpochMilli(request.timestamp())
+    public void onGatewayMeasurement(String gatewayTopic, Object value, Long timestampMillis) {
+        machineIdResolver.resolve(gatewayTopic).ifPresent(machineAttribute -> {
+            Instant timestamp = timestampMillis != null
+                    ? Instant.ofEpochMilli(timestampMillis)
                     : Instant.now();
 
             machineStateRegistryService.applyAttribute(
                     machineAttribute.machineId(),
                     machineAttribute.attribute(),
-                    request.value(),
+                    value,
                     timestamp
             ).ifPresent(machineTelemetrySseService::broadcastMachineUpdate);
         });

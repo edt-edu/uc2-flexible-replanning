@@ -28,6 +28,10 @@ export class MachineTelemetryService {
                 try {
                     const parsed = JSON.parse(event.data);
                     const machineUpdate = fromMachineUpdate(parsed);
+                    console.log(
+                        `[MachineTelemetryService] machine-update ${machineUpdate.machineId} (${machineUpdate.machineType}) @ ${machineUpdate.timestamp}`,
+                        machineUpdate.state
+                    );
                     this.machineUpdateSubject.next(machineUpdate);
                 } catch (error) {
                     console.error('[MachineTelemetryService] Error parsing machine update:', error);

@@ -32,16 +32,13 @@ export class HighBayWarehouseModel extends GenericMachine {
 
     override render(machineEl: SVGGElement): void {
         super.render(machineEl);
-        const storageRects = machineEl.querySelectorAll<SVGRectElement>('#storageHBWSystemModel rect');
+        const storageRects = machineEl.querySelectorAll<SVGRectElement>(`#storage${this.id} rect`);
         const states = [this.storageA, this.storageB, this.storageC];
         storageRects.forEach((rect, index) => {
             rect.classList.toggle('active', states[index] ?? false);
         });
 
-        const lightBarriers = machineEl.querySelectorAll<SVGRectElement>('g > rect.lightBarrier');
-        if (lightBarriers.length >= 2) {
-            lightBarriers[0].classList.toggle('active', this.inputBarrier);
-            lightBarriers[1].classList.toggle('active', this.outputBarrier);
-        }
+        this.toggleElementClass(machineEl, `inputBarrier${this.id}`, 'active', this.inputBarrier);
+        this.toggleElementClass(machineEl, `outputBarrier${this.id}`, 'active', this.outputBarrier);
     }
 }

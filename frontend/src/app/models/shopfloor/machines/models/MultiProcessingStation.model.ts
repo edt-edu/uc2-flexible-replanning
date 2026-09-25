@@ -6,6 +6,8 @@ export class MultiProcessingStationModel extends GenericMachine {
     sawEnabled: boolean = false;
     sawRotation: number = 0;
     sliderExtended: boolean = false;
+    sensorIn: boolean = false;
+    sensorOut: boolean = false;
 
     override update(data: MachineTelemetryData): void {
         super.update(data);
@@ -20,19 +22,28 @@ export class MultiProcessingStationModel extends GenericMachine {
         if (typeof state['sliderExtended'] === 'boolean') {
             this.sliderExtended = state['sliderExtended'];
         }
+        if (typeof state['sensorIn'] === 'boolean') {
+            this.sensorIn = state['sensorIn'];
+        }
+        if (typeof state['sensorOut'] === 'boolean') {
+            this.sensorOut = state['sensorOut'];
+        }
     }
 
     override render(machineEl: SVGGElement): void {
         super.render(machineEl);
 
-        const slider = machineEl.querySelector<SVGRectElement>('#sliderMPSystemModel rect');
+        this.toggleElementClass(machineEl, `sensorIn${this.id}`, 'active', this.sensorIn);
+        this.toggleElementClass(machineEl, `sensorOut${this.id}`, 'active', this.sensorOut);
+
+        const slider = machineEl.querySelector<SVGRectElement>(`#slider${this.id} rect`);
         if (slider) {
             slider.classList.toggle('active', this.sliderExtended);
         }
 
-        const saw = machineEl.querySelector<SVGPolygonElement>('#sawMPSystemModel polygon');
+        const saw = machineEl.querySelector<SVGPolygonElement>(`#saw${this.id} polygon`);
         if (saw) {
-            saw.classList.toggle('active', this.sawEnabled);
+            saw.classList.toggle('sawActive', this.sawEnabled);
             saw.setAttribute('transform', `rotate(${this.sawRotation} 156 180)`);
         }
     }

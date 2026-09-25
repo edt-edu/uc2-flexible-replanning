@@ -6,6 +6,7 @@ import mbdo.dt.connectivity.GatewayServiceConfiguration.MqttInfluxDbRecording;
 import mbdo.dt.utils.YamlUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Service;
 
@@ -25,13 +26,16 @@ public class GatewayService {
     private final ApplicationContext applicationContext;
     private final GatewayServiceConfiguration gatewayServiceConfiguration;
     private final GatewayConfigurationLocator gatewayConfigurationLocator;
+    private final String machineTelemetryTopicFilter;
 
     public GatewayService(
             GatewayConfigurationLocator gatewayConfigurationLocator,
-            ApplicationContext applicationContext
+            ApplicationContext applicationContext,
+            @Value("${telemetry.gateway-topic-filter:gateway/#}") String machineTelemetryTopicFilter
     ) {
         this.gatewayConfigurationLocator = gatewayConfigurationLocator;
         this.applicationContext = applicationContext;
+        this.machineTelemetryTopicFilter = machineTelemetryTopicFilter;
         this.gatewayServiceConfiguration = loadGatewayServiceConfiguration();
     }
 
@@ -76,8 +80,17 @@ public class GatewayService {
         return gatewayServiceConfiguration;
     }
 
+    /** Gateway topics ({@code gateway/<setup>/<MachineModel>/<attribute>}) forwarded to the shopfloor UI. */
+    public String getMachineTelemetryTopicFilter() {
+        return machineTelemetryTopicFilter;
+    }
+
     public List<String> getMonitoredMqttTopics() {
         HashSet<String> monitoredTopics = new HashSet<>();
+
+        if (machineTelemetryTopicFilter != null && !machineTelemetryTopicFilter.isBlank()) {
+            monitoredTopics.add(machineTelemetryTopicFilter);
+        }
 
         if (gatewayServiceConfiguration.mqttInfluxDbRecordings() != null) {
             for (MqttInfluxDbRecording influxRecording : gatewayServiceConfiguration.mqttInfluxDbRecordings()) {
@@ -93,9 +106,25 @@ public class GatewayService {
             }
         }
 
-        List<String> result = new ArrayList<>(monitoredTopics);
+        // Overlapping subscriptions may make the broker deliver the same message once per match.
+        List<String> result = new ArrayList<>();
+        for (String topic : monitoredTopics) {
+            if (!isCoveredByOtherFilter(topic, monitoredTopics)) {
+                result.add(topic);
+            }
+        }
         Collections.sort(result);
         return result;
+    }
+
+    private static boolean isCoveredByOtherFilter(String topic, Iterable<String> filters) {
+        for (String filter : filters) {
+            if (!filter.equals(topic) && filter.endsWith("/#")
+                    && topic.startsWith(filter.substring(0, filter.length() - 1))) {
+                return true;
+            }
+        }
+        return false;
     }
 
 }

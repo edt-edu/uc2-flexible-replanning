@@ -47,6 +47,11 @@ export class GenericMachine implements IMachine {
         this.renderMachinePopup(machineEl);
     }
 
+    /** Toggles `className` on the element `#{elementId}` inside this machine's group. */
+    protected toggleElementClass(machineEl: SVGGElement, elementId: string, className: string, force: boolean): void {
+        machineEl.querySelector(`#${elementId}`)?.classList.toggle(className, force);
+    }
+
     private renderMachinePopup(machineEl: SVGGElement): void {
         const popup = machineEl.ownerSVGElement?.querySelector<SVGGElement>(`#popup${this.id}`) ?? null;
         if (popup) {

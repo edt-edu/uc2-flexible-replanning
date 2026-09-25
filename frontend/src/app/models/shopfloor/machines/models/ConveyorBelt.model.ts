@@ -30,15 +30,34 @@ export class ConveyorBeltModel extends GenericMachine {
         }
     }
 
+    private runningAnimation: SVGAnimationElement | null = null;
+
     override render(machineEl: SVGGElement): void {
         super.render(machineEl);
-        const belt = machineEl.querySelector<SVGRectElement>(`#beltSurface${this.id}`);
-        if (!belt) {
+        this.toggleElementClass(machineEl, `beltSurface${this.id}`, 'movingPartNotOperational', !this.isOperational);
+        this.toggleElementClass(machineEl, `sensorFeed${this.id}`, 'active', this.sensorFeed);
+        this.toggleElementClass(machineEl, `sensorSwap${this.id}`, 'active', this.sensorSwap);
+        this.renderBeltAnimation(machineEl);
+    }
+
+    /** Scrolls the belt pattern (SMIL animation in the SVG defs) while the belt is running. */
+    private renderBeltAnimation(machineEl: SVGGElement): void {
+        const svg = machineEl.ownerSVGElement;
+        if (!svg) {
             return;
         }
 
-        belt.classList.toggle('movingPartNotOperational', !this.isOperational);
-        belt.classList.toggle('forward', this.isOperational && this.direction === 'forward');
-        belt.classList.toggle('backward', this.isOperational && (this.direction === 'backward' || this.direction === 'reverse'));
+        const isBackward = this.direction === 'backward' || this.direction === 'reverse';
+        const animationId = isBackward ? `beltBackward${this.id}` : `beltForward${this.id}`;
+        const target = this.isOperational && this.isExecuting
+            ? svg.querySelector<SVGAnimationElement>(`#${animationId}`)
+            : null;
+
+        if (target === this.runningAnimation) {
+            return;
+        }
+        this.runningAnimation?.endElement();
+        target?.beginElement();
+        this.runningAnimation = target;
     }
 }

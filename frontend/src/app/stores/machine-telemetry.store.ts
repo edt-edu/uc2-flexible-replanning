@@ -71,6 +71,7 @@ export class MachineTelemetryStore {
         this.machineEntitiesState.update((current) => {
             const currentEntity = current[machineId] ?? RENNES_FACTORY_MACHINE_MODELS_BY_ID[machineId];
             if (!currentEntity) {
+                console.warn(`[MachineTelemetryStore] Ignoring update for unknown machine id '${machineId}'`);
                 return current;
             }
 

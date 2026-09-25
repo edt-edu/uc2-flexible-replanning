@@ -40,8 +40,10 @@ export class VacuumGripperModel extends GenericMachine {
         const rotationGroup = machineEl.querySelector<SVGGElement>(`#vgrArmRotation${this.id}`);
         if (rotationGroup) {
             rotationGroup.setAttribute('transform', `rotate(${this.armRotation} 214 105)`);
-            console.log(`Rotating arm to ${this.armRotation} degrees`);
         }
+
+        this.toggleElementClass(machineEl, `vgrEndEffector${this.id}`, 'gripperActive', this.gripperState);
+        this.toggleElementClass(machineEl, `vgrArmBody${this.id}`, 'armLowered', !this.isArmElevated);
 
         const armBody = machineEl.querySelector<SVGRectElement>(`#vgrArmBody${this.id}`);
         const endEffector = machineEl.querySelector<SVGRectElement>(`#vgrEndEffector${this.id}`);

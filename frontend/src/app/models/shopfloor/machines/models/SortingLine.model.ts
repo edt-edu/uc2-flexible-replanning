@@ -1,4 +1,4 @@
-import { IMachine, MachineTelemetryData } from '../interfaces/IMachine';
+import { MachineTelemetryData } from '../interfaces/IMachine';
 import { GenericMachine } from './GenericMachine.model';
 
 export class SortingLineModel extends GenericMachine {
@@ -37,5 +37,10 @@ export class SortingLineModel extends GenericMachine {
 
     override render(machineEl: SVGGElement): void {
         super.render(machineEl);
+        this.toggleElementClass(machineEl, `sortingLineSensInputLightBarrier${this.id}`, 'active', this.sortingLineSensInputLightBarrier);
+        this.toggleElementClass(machineEl, `sortingLineSensMiddleLightBarrier${this.id}`, 'active', this.sortingLineSensMiddleLightBarrier);
+        this.toggleElementClass(machineEl, `sortingLineSensWhiteLightBarrier${this.id}`, 'active', this.sortingLineSensWhiteLightBarrier);
+        this.toggleElementClass(machineEl, `sortingLineSensBlueLightBarrier${this.id}`, 'active', this.sortingLineSensBlueLightBarrier);
+        this.toggleElementClass(machineEl, `sortingLineSensRedLightBarrier${this.id}`, 'active', this.sortingLineSensRedLightBarrier);
     }
 }

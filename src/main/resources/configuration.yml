@@ -1,58 +1,32 @@
 configuration:
   name: "GatewayConfiguration"
 
+  # The DT never talks to the PLCs: it consumes what the platform data-gateway-service
+  # (dt-platform/components/gateways/data-gateway-service) republishes on
+  #   gateway/<setup>/<MachineModel>/<attribute>
+  # The <setup> segment is wildcarded so the same file works for every setup (VIRTUAL_..., REN_...).
   mqttSourceBrokerUrl: tcp://localhost:1883
   mqttTargetBrokerUrl: tcp://localhost:1883
 
   mqttInfluxDbRecordings:
     - name: "Physical_Twin_VGR1"
-      mqttSourceTopic: "PLC/+/VacuumGripper/I1VacuumGripper01/#"
+      mqttSourceTopic: "gateway/+/VGRSystemModel_01/#"
       dataProcess: extract-json-value
       timeProcess: extract-json-timestamp
 
-    - name: "Digital_Twin_VGR1"
-      mqttSourceTopic: "gateway/REN_1V_01_VGRSystemModel/#"
+    - name: "Physical_Twin_VGR2"
+      mqttSourceTopic: "gateway/+/VGRSystemModel_02/#"
       dataProcess: extract-json-value
       timeProcess: extract-json-timestamp
 
+  # Map gateway measurements onto the attributes of the SysML mission model.
+  # mqttTargetTopic is "<SysML model>/<attribute path>" and is dispatched in-process to the DT engine
+  # (nothing is republished on MQTT). Every gateway measurement also reaches the shopfloor UI
+  # directly, without needing an entry here (see ShopfloorMachineIdResolver).
   dtEventGroups:
-    - name: "REN_1V_01_VGRSystemModel/input"
-      dataTransformation: clone
-      mqttSourcePrefix: "PLC/+/VacuumGripper/I1VacuumGripper01/measurements/input/"
-      mqttTargetPrefix: "gateway/"
-      dtEvents:
-        - mqttSourceTopic: "vacuumSensVerticalEncoderCounter"
-          mqttTargetTopic: "REN_1V_01_VGRSystemModel/verticalEncoder"
-
-        - mqttSourceTopic: "vacuumSensArmEncoderCounter"
-          mqttTargetTopic: "REN_1V_01_VGRSystemModel/armEncoder"
-
-        - mqttSourceTopic: "vacuumSensRotEncoderCounter"
-          mqttTargetTopic: "REN_1V_01_VGRSystemModel/rotEncoder"
-
-    - name: "REN_1V_01_VGRSystemModel/output"
-      dataTransformation: clone
-      mqttSourcePrefix: "PLC/+/VacuumGripper/I1VacuumGripper01/measurements/output/"
-      mqttTargetPrefix: "gateway/"
-      dtEvents:
-        - mqttSourceTopic: "vacuumActCompressorOn"
-          mqttTargetTopic: "REN_1V_01_VGRSystemModel/vacuumActCompressorOn"
-
-        - mqttSourceTopic: "vacuumActValve"
-          mqttTargetTopic: "REN_1V_01_VGRSystemModel/vacuumActValve"
-
-    - name: "REN_1V_01_VGRSystemModel/internal"
-      dataTransformation: clone
-      mqttSourcePrefix: "PLC/+/VacuumGripper/I1VacuumGripper01/measurements/internal/"
-      mqttTargetPrefix: "gateway/"
-      dtEvents:
-        - mqttSourceTopic: "isExecuting"
-          mqttTargetTopic: "REN_1V_01_VGRSystemModel/isExecuting"
-
     - name: "TokenLocation/conveyorBelt"
       dataTransformation: clone
-      mqttSourcePrefix: "PLC/+/ConveyorBelt/I1ConveyorBelt01/measurements/input/"
-      mqttTargetPrefix: "gateway/"
+      mqttSourcePrefix: "gateway/+/CBSystemModel/"
       dtEvents:
         - mqttSourceTopic: "conveyorSensFeed"
           mqttTargetTopic: "TokenLocation/cb/conveyorSensFeed"
@@ -62,8 +36,7 @@ configuration:
 
     - name: "TokenLocation/sortingLine"
       dataTransformation: clone
-      mqttSourcePrefix: "PLC/+/SortingLine/I1SortingLine01/measurements/input/"
-      mqttTargetPrefix: "gateway/"
+      mqttSourcePrefix: "gateway/+/SLSystemModel/"
       dtEvents:
         - mqttSourceTopic: "sortingLineSensInputLightBarrier"
           mqttTargetTopic: "TokenLocation/sl/sensor_SL_in"
@@ -79,8 +52,7 @@ configuration:
 
     - name: "TokenLocation/vgr1"
       dataTransformation: clone
-      mqttSourcePrefix: "PLC/+/VacuumGripper/I1VacuumGripper01/measurements/output/"
-      mqttTargetPrefix: "gateway/"
+      mqttSourcePrefix: "gateway/+/VGRSystemModel_01/"
       dtEvents:
         - mqttSourceTopic: "vacuumActCompressorOn"
           mqttTargetTopic: "TokenLocation/vgr1/vacuumActCompressorOn"
@@ -90,8 +62,7 @@ configuration:
 
     - name: "TokenLocation/vgr2"
       dataTransformation: clone
-      mqttSourcePrefix: "PLC/+/VacuumGripper/I1VacuumGripper02/measurements/output/"
-      mqttTargetPrefix: "gateway/"
+      mqttSourcePrefix: "gateway/+/VGRSystemModel_02/"
       dtEvents:
         - mqttSourceTopic: "vacuumActCompressorOn"
           mqttTargetTopic: "TokenLocation/vgr2/vacuumActCompressorOn"
@@ -99,10 +70,10 @@ configuration:
         - mqttSourceTopic: "vacuumActValve"
           mqttTargetTopic: "TokenLocation/vgr2/vacuumActValve"
 
+    # sensor_MPS_in / sensor_MPS_out are not published by the platform gateway configuration yet.
     - name: "TokenLocation/multiProcessingStation"
       dataTransformation: clone
-      mqttSourcePrefix: "PLC/+/MultiProcessing/I1MultiProcessing01/measurements/input/"
-      mqttTargetPrefix: "gateway/"
+      mqttSourcePrefix: "gateway/+/MPSystemModel/"
       dtEvents:
         - mqttSourceTopic: "sensor_MPS_in"
           mqttTargetTopic: "TokenLocation/mpo/sensor_MPS_in"
@@ -110,11 +81,10 @@ configuration:
         - mqttSourceTopic: "sensor_MPS_out"
           mqttTargetTopic: "TokenLocation/mpo/sensor_MPS_out"
 
-
+    # Test fixtures only: synthetic positioning values published by tools/mqtt-publishers.
     - name: "TokenLocation/testFixtures/positioning"
       dataTransformation: clone
       mqttSourcePrefix: "TEST/TokenLocation/positioning/"
-      mqttTargetPrefix: "gateway/"
       dtEvents:
         - mqttSourceTopic: "encoderTolerance"
           mqttTargetTopic: "TokenLocation/encoderTolerance"
