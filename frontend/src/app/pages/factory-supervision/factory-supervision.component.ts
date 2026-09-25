@@ -1,5 +1,5 @@
 import { Component, computed, inject, OnDestroy, OnInit, signal } from '@angular/core';
-import { CommonModule } from '@angular/common';
+
 
 import { NavbarComponent, NavbarRole } from '../../components/navbar/navbar.component';
 import { ReplanningIncidentPopupComponent } from '../../components/replanning-incident-popup/replanning-incident-popup.component';
@@ -11,7 +11,7 @@ const ROLE_SESSION_STORAGE_KEY = 'factorySupervisionRole';
 @Component({
     selector: 'app-factory-supervision',
     standalone: true,
-    imports: [CommonModule, NavbarComponent, ReplanningIncidentPopupComponent, FactoryShopfloorLayoutComponent],
+    imports: [NavbarComponent, ReplanningIncidentPopupComponent, FactoryShopfloorLayoutComponent],
     templateUrl: './factory-supervision.component.html',
     styleUrls: ['./factory-supervision.component.css']
 })
