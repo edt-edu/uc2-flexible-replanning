@@ -1,5 +1,6 @@
 
 import json
+import os
 from datetime import datetime, timezone
 
 import paho.mqtt.client as mqtt
@@ -9,7 +10,8 @@ DEFAULT_PORT = 1883
 
 # Topics are the ones republished by the platform data-gateway-service
 # (gateway/<setup>/<MachineModel>/<attribute>), so the DT can be driven without PLCs or gateway.
-SETUP = "VIRTUAL_1C1H1M1S2V_01"
+# Set SETUP=REN_1S1V_1C1V_1H1M_02 to target the Rennes setup (the twin accepts any setup name).
+SETUP = os.environ.get("SETUP", "VIRTUAL_1C1H1M1S2V_01")
 GATEWAY = f"gateway/{SETUP}"
 
 TOPICS = {

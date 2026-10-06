@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -44,11 +45,23 @@ public class MachineStateRegistryService {
             return Optional.empty();
         }
 
-        return Optional.of(new MachineStateUpdateResponse(
+        return Optional.of(toResponse(machineState));
+    }
+
+    /** Latest state of every machine the frontend can display, e.g. to initialize a newly connected client. */
+    public List<MachineStateUpdateResponse> snapshots() {
+        return machineStates.values().stream()
+                .filter(MachineState::isReadyForFrontend)
+                .map(MachineStateRegistryService::toResponse)
+                .toList();
+    }
+
+    private static MachineStateUpdateResponse toResponse(MachineState machineState) {
+        return new MachineStateUpdateResponse(
                 machineState.machineId(),
                 machineState.machineType(),
                 machineState.toState(),
                 machineState.updatedAt()
-        ));
+        );
     }
 }

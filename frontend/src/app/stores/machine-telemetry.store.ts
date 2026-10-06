@@ -7,6 +7,7 @@ import {
     toShopfloorMachineUpdate
 } from '../models/machine-update.model';
 import { MachineTelemetryService } from '../services/machine-telemetry.service';
+import { TokenLocation } from '../models/token-location.model';
 import { IMachine } from '../models/shopfloor/machines/interfaces/IMachine';
 import { RENNES_FACTORY_MACHINE_MODELS_BY_ID } from '../models/shopfloor/config/RennesFactorySetup1.js';
 
@@ -39,6 +40,11 @@ export class MachineTelemetryStore {
         }
 
         return this.updatesSubject.asObservable();
+    }
+
+    /** Inferred token location updates (received on the telemetry stream opened by connect()). */
+    get tokenUpdates$(): Observable<TokenLocation> {
+        return this.machineTelemetryService.tokenUpdates$;
     }
 
     getMachineById(machineId: string): IMachine | undefined {

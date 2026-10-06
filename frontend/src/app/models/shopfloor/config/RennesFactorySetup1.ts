@@ -10,8 +10,9 @@ export const RENNES_FACTORY_MACHINE_MODELS: IMachine[] = [
     new HighBayWarehouseModel('HBWSystemModel', { x: 460, y: 150 }, 0),
     new SortingLineModel('SLSystemModel', { x: 150, y: 1350 }, 270),
     new MultiProcessingStationModel('MPSystemModel', { x: 460, y: 470 }, 90),
-    new VacuumGripperModel('VGRSystemModel_01', { x: 750, y: 810 }, 180),
-    new VacuumGripperModel('VGRSystemModel_02', { x: 660, y: 1020 }, 90)
+    // Same placement as the machine groups of /assets/shopfloor.svg, which is what is drawn.
+    new VacuumGripperModel('VGRSystemModel_01', { x: 660, y: 1020 }, 90),
+    new VacuumGripperModel('VGRSystemModel_02', { x: 493, y: 624 }, 0)
 ];
 
 export const RENNES_FACTORY_MACHINE_MODELS_BY_ID: Record<string, IMachine> =

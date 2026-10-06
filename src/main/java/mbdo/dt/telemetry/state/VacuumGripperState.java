@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Optional;
 
 public class VacuumGripperState extends AbstractMachineState {
 
@@ -26,9 +27,16 @@ public class VacuumGripperState extends AbstractMachineState {
     private boolean isArmElevated;
     private boolean isArmExtended;
 
+    // Arm drawn from the named positions of this VGR when known (see VacuumGripperArmCalibration).
+    private final Optional<VacuumGripperArmCalibration> calibration;
+    private double rotationCounts;
+    private double horizontalCounts;
+
     public VacuumGripperState(String machineId) {
         super(machineId);
+        this.calibration = VacuumGripperArmCalibration.forMachine(machineId);
         this.armExtension = MIN_ARM_EXTENSION_MM;
+        applyCalibratedArm();
     }
 
     @Override
@@ -99,8 +107,12 @@ public class VacuumGripperState extends AbstractMachineState {
 
     @Override
     protected void onInitializedFromFeedback(Map<String, Object> payload) {
+        // After SETUP every axis is on its reference switch: encoders at 0.
+        rotationCounts = 0d;
+        horizontalCounts = 0d;
         armRotation = 0d;
         armExtension = MIN_ARM_EXTENSION_MM;
+        applyCalibratedArm();
         isArmElevated = true;
         isArmExtended = false;
         logger.info("[{}] VGR initialization defaults applied", machineId);
@@ -113,6 +125,10 @@ public class VacuumGripperState extends AbstractMachineState {
     }
 
     private void applyArmCounter(double rawCounter) {
+        horizontalCounts = rawCounter;
+        if (applyCalibratedArm()) {
+            return;
+        }
         double clamped = clamp(rawCounter, 0d, MAX_ARM_ENCODER_COUNTER);
         double ratio = clamped / MAX_ARM_ENCODER_COUNTER;
         armExtension = MIN_ARM_EXTENSION_MM + (ratio * (MAX_ARM_EXTENSION_MM - MIN_ARM_EXTENSION_MM));
@@ -120,9 +136,23 @@ public class VacuumGripperState extends AbstractMachineState {
     }
 
     private void applyRotationCounter(double rawCounter) {
+        rotationCounts = rawCounter;
+        if (applyCalibratedArm()) {
+            return;
+        }
         double clamped = clamp(rawCounter, 0d, MAX_ROT_ENCODER_COUNTER);
         // SVG positive rotation is clockwise, so invert sign to map counter growth to CCW.
         armRotation = -((clamped / MAX_ROT_ENCODER_COUNTER) * MAX_ARM_ROTATION_DEG);
+    }
+
+    /** Draws the arm from the current encoder counts with this VGR's calibration; false if it has none. */
+    private boolean applyCalibratedArm() {
+        calibration.ifPresent(c -> {
+            armRotation = c.angle(rotationCounts);
+            armExtension = c.length(rotationCounts, horizontalCounts);
+            isArmExtended = armExtension > MIN_ARM_EXTENSION_MM;
+        });
+        return calibration.isPresent();
     }
 
     private static double clamp(double value, double min, double max) {

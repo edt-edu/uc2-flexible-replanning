@@ -25,29 +25,32 @@ public class SortingLineState extends AbstractMachineState {
     protected void applyAttributeInternal(String normalizedAttribute, Object value) {
         Boolean boolValue = asBoolean(value);
         if (boolValue != null) {
+            // The light barriers are active-low (false = token in the beam): inverted so the UI shows
+            // true = triggered.
+            boolean triggered = !boolValue;
             // Gateway aliases from configuration.yml: sensor_SL_in / _white / _blue / _red.
             if (normalizedAttribute.contains("sortinglinesensinputlightbarrier")
                     || normalizedAttribute.equals("sensorslin")) {
-                sortingLineSensInputLightBarrier = boolValue;
+                sortingLineSensInputLightBarrier = triggered;
                 return;
             }
             if (normalizedAttribute.contains("sortinglinesensmiddlelightbarrier")) {
-                sortingLineSensMiddleLightBarrier = boolValue;
+                sortingLineSensMiddleLightBarrier = triggered;
                 return;
             }
             if (normalizedAttribute.contains("sortinglinesenswhitelightbarrier")
                     || normalizedAttribute.equals("sensorslwhite")) {
-                sortingLineSensWhiteLightBarrier = boolValue;
+                sortingLineSensWhiteLightBarrier = triggered;
                 return;
             }
             if (normalizedAttribute.contains("sortinglinesensbluelightbarrier")
                     || normalizedAttribute.equals("sensorslblue")) {
-                sortingLineSensBlueLightBarrier = boolValue;
+                sortingLineSensBlueLightBarrier = triggered;
                 return;
             }
             if (normalizedAttribute.contains("sortinglinesensredlightbarrier")
                     || normalizedAttribute.equals("sensorslred")) {
-                sortingLineSensRedLightBarrier = boolValue;
+                sortingLineSensRedLightBarrier = triggered;
                 return;
             }
         }

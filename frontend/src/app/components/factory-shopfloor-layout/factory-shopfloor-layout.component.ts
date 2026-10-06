@@ -2,6 +2,8 @@ import { AfterViewInit, Component, ElementRef, OnDestroy, ViewChild } from '@ang
 import { Subscription } from 'rxjs';
 
 import { ShopfloorMachineUpdate } from '../../models/machine-update.model';
+import { VacuumGripperModel } from '../../models/shopfloor/machines/models/VacummGripper.model';
+import { TokenLocation } from '../../models/token-location.model';
 import { MachineTelemetryStore } from '../../stores/machine-telemetry.store';
 
 @Component({
@@ -39,11 +41,11 @@ import { MachineTelemetryStore } from '../../stores/machine-telemetry.store';
                             <span>Moving Parts</span>
                         </li>
                         <li class="flex items-center gap-3">
-                            <span class="h-4 w-4 rounded border border-yellow-300" style="background:rgba(255, 255, 0, 0.5)"></span>
+                            <span class="h-4 w-4 rounded border border-yellow-300" style="background:#fef9c3"></span>
                             <span>Light Barrier Sensor</span>
                         </li>
                         <li class="flex items-center gap-3">
-                            <span class="h-4 w-4 rounded border border-green-300" style="background:rgba(34, 197, 94, 0.75)"></span>
+                            <span class="h-4 w-4 rounded border border-yellow-500" style="background:#facc15"></span>
                             <span>Light Barrier Triggered</span>
                         </li>
                         <li class="flex items-center gap-3">
@@ -51,6 +53,27 @@ import { MachineTelemetryStore } from '../../stores/machine-telemetry.store';
                             <span>Gripper Vacuum On</span>
                         </li>
                     </ul>
+
+                    <p class="mb-4 mt-6 text-xs text-slate-500">Token (inferred by the digital twin)</p>
+                    <ul class="space-y-3 text-sm text-slate-700">
+                        <li class="flex items-center gap-3">
+                            <span class="h-4 w-4 rounded-full border border-slate-700" style="background:#9ca3af"></span>
+                            <span>Color not known yet</span>
+                        </li>
+                        <li class="flex items-center gap-3">
+                            <span class="h-4 w-4 rounded-full border border-slate-700" style="background:#ffffff"></span>
+                            <span class="h-4 w-4 rounded-full border border-slate-700" style="background:#dc2626"></span>
+                            <span class="h-4 w-4 rounded-full border border-slate-700" style="background:#2563eb"></span>
+                            <span>White / red / blue</span>
+                        </li>
+                        <li class="flex items-center gap-3">
+                            <span class="h-4 w-4 rounded-full border-2 border-dashed border-red-600"></span>
+                            <span>Last position before an anomaly</span>
+                        </li>
+                    </ul>
+                    <p class="mt-3 text-xs text-slate-500" data-testid="token-state">
+                        {{ tokenDescription }}
+                    </p>
                 </div>
             </aside>
 
@@ -63,6 +86,29 @@ import { MachineTelemetryStore } from '../../stores/machine-telemetry.store';
 export class FactoryShopfloorLayoutComponent implements AfterViewInit, OnDestroy {
     @ViewChild('svgContainer', { static: true }) svgContainer!: ElementRef<HTMLElement>;
     private subscription: Subscription | null = null;
+    private tokenSubscription: Subscription | null = null;
+    private lastToken: TokenLocation | null = null;
+    tokenDescription = 'No token';
+
+    /** Inferred token location -> SVG element the token is drawn on. */
+    private static readonly TOKEN_ANCHOR_BY_LOCATION: Record<string, string> = {
+        'sl-input': 'sortingLineSensInputLightBarrierSLSystemModel',
+        'sl-white': 'sortingLineSensWhiteLightBarrierSLSystemModel',
+        'sl-red': 'sortingLineSensRedLightBarrierSLSystemModel',
+        'sl-blue': 'sortingLineSensBlueLightBarrierSLSystemModel',
+        'vgr1': 'vgrEndEffectorVGRSystemModel_01',
+        'cb-feed': 'sensorFeedCBSystemModel',
+        'cb-swap': 'sensorSwapCBSystemModel',
+        'vgr2': 'vgrEndEffectorVGRSystemModel_02',
+        'mps-input': 'sensorInMPSystemModel',
+        'mps-output': 'sensorOutMPSystemModel'
+    };
+    private static readonly TOKEN_FILL_BY_COLOR: Record<string, string> = {
+        WHITE: '#ffffff',
+        RED: '#dc2626',
+        BLUE: '#2563eb'
+    };
+    private static readonly TOKEN_ELEMENT_ID = 'inferredToken';
     private static readonly MACHINE_NAME_BY_ID: Record<string, string> = {
         CBSystemModel: 'Conveyor Belt',
         HBWSystemModel: 'High Bay Warehouse',
@@ -90,6 +136,7 @@ export class FactoryShopfloorLayoutComponent implements AfterViewInit, OnDestroy
                     svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
                 }
                 this.cacheMachines();
+                this.renderToken();
             });
 
         // Subscribe to telemetry
@@ -97,10 +144,15 @@ export class FactoryShopfloorLayoutComponent implements AfterViewInit, OnDestroy
             next: update => this.applyUpdate(update),
             error: err => console.error('[Shopfloor] Telemetry error:', err)
         });
+        this.tokenSubscription = this.telemetryStore.tokenUpdates$.subscribe(token => {
+            this.lastToken = token;
+            this.renderToken();
+        });
     }
 
     ngOnDestroy(): void {
         this.subscription?.unsubscribe();
+        this.tokenSubscription?.unsubscribe();
         this.telemetryStore.disconnect();
     }
 
@@ -125,6 +177,14 @@ export class FactoryShopfloorLayoutComponent implements AfterViewInit, OnDestroy
             const machine = this.telemetryStore.getMachineById(machineId);
             if (!machine) {
                 return;
+            }
+            if (machine instanceof VacuumGripperModel) {
+                // the arm is animated between updates: a token held by the gripper follows it on every frame
+                machine.onArmFrame = () => {
+                    if (this.lastToken?.location?.startsWith('vgr')) {
+                        this.renderToken();
+                    }
+                };
             }
             machine.render(machineEl);
         });
@@ -154,6 +214,51 @@ export class FactoryShopfloorLayoutComponent implements AfterViewInit, OnDestroy
         return Object.hasOwn(FactoryShopfloorLayoutComponent.MACHINE_NAME_BY_ID, groupId);
     }
 
+    /** Draws the inferred token on the SVG element of its location (none when there is no token). */
+    private renderToken(): void {
+        const token = this.lastToken;
+        this.tokenDescription = !token || !token.location
+            ? `No token${token?.state ? ` (${token.state})` : ''}`
+            : `${token.color ?? 'Unknown color'} token at ${token.location} (${token.state})${token.anomaly ? ' - anomaly' : ''}`;
+
+        const svg = this.svgContainer.nativeElement.querySelector<SVGSVGElement>('svg');
+        if (!svg) return;
+        svg.querySelector(`#${FactoryShopfloorLayoutComponent.TOKEN_ELEMENT_ID}`)?.remove();
+        if (!token?.location) return;
+
+        const anchorId = FactoryShopfloorLayoutComponent.TOKEN_ANCHOR_BY_LOCATION[token.location];
+        const anchor = anchorId ? svg.querySelector<SVGGraphicsElement>(`#${anchorId}`) : null;
+        if (!anchor) {
+            console.warn(`[Shopfloor] No SVG element for token location '${token.location}'`);
+            return;
+        }
+
+        // drawn next to the anchor, in the same coordinate system, so it follows the machine's transforms
+        const box = anchor.getBBox();
+        const svgNs = 'http://www.w3.org/2000/svg';
+        const circle = document.createElementNS(svgNs, 'circle');
+        circle.setAttribute('id', FactoryShopfloorLayoutComponent.TOKEN_ELEMENT_ID);
+        circle.setAttribute('cx', String(box.x + box.width / 2));
+        circle.setAttribute('cy', String(box.y + box.height / 2));
+        circle.setAttribute('r', '12');
+        circle.setAttribute('fill', token.color ? FactoryShopfloorLayoutComponent.TOKEN_FILL_BY_COLOR[token.color] : '#9ca3af');
+        circle.setAttribute('stroke', token.anomaly ? '#dc2626' : '#111827');
+        circle.setAttribute('stroke-width', token.anomaly ? '3' : '2');
+        if (token.anomaly) {
+            circle.setAttribute('stroke-dasharray', '4 3');
+        }
+        const anchorTransform = anchor.getAttribute('transform');
+        if (anchorTransform && anchor.tagName.toLowerCase() !== 'g') {
+            circle.setAttribute('transform', anchorTransform);
+        }
+        const title = document.createElementNS(svgNs, 'title');
+        title.textContent = this.tokenDescription;
+        circle.appendChild(title);
+
+        const container = anchor.tagName.toLowerCase() === 'g' ? anchor : anchor.parentNode;
+        container?.appendChild(circle);
+    }
+
     /**
      * Apply a telemetry update to a machine
      */
@@ -164,6 +269,6 @@ export class FactoryShopfloorLayoutComponent implements AfterViewInit, OnDestroy
         const machineEl = this.machineCache.get(update.machineId);
         if (!machineEl) return;
 
-        machine.render(machineEl); // model handles the rendering
+        machine.render(machineEl); // model handles the rendering (a VGR then follows its arm, see onArmFrame)
     }
 }

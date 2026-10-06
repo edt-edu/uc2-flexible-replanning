@@ -32,6 +32,16 @@ public class MultiProcessingStationState extends AbstractMachineState {
                 sliderExtended = boolValue;
                 return;
             }
+            // Platform light barriers, active-low (false = token in the beam): inverted so the UI shows
+            // true = triggered. The input is the oven feeder, where VGR2 places the token.
+            if (normalizedAttribute.equals("multiprocessingsensoven")) {
+                sensorIn = !boolValue;
+                return;
+            }
+            if (normalizedAttribute.equals("multiprocessingsensendconveyor")) {
+                sensorOut = !boolValue;
+                return;
+            }
             // Gateway aliases from configuration.yml: sensor_MPS_in / sensor_MPS_out.
             if (normalizedAttribute.equals("sensormpsin")) {
                 sensorIn = boolValue;

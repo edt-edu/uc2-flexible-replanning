@@ -32,14 +32,16 @@ public class ConveyorBeltState extends AbstractMachineState {
             isExecuting = boolValue;
             return;
         }
+        // The feed / swap light barriers are active-low (false = token in the beam): inverted so the UI shows
+        // true = triggered.
         if ((normalizedAttribute.contains("sensorfeed") || normalizedAttribute.contains("sensfeed"))
                 && boolValue != null) {
-            sensorFeed = boolValue;
+            sensorFeed = !boolValue;
             return;
         }
         if ((normalizedAttribute.contains("sensorswap") || normalizedAttribute.contains("sensswap"))
                 && boolValue != null) {
-            sensorSwap = boolValue;
+            sensorSwap = !boolValue;
             return;
         }
         if ((normalizedAttribute.contains("sensorimpulse") || normalizedAttribute.contains("sensimpulse"))

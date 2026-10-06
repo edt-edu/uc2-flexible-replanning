@@ -24,8 +24,8 @@
         }
 
         .lightBarrier {
-            fill: yellow;
-            fill-opacity: 0.5;
+            fill: #fef9c3;
+            fill-opacity: 1;
             stroke: black;
         }
 
@@ -112,8 +112,8 @@
         }
 
         .lightBarrier.active {
-            fill: #22c55e;
-            fill-opacity: 0.75;
+            fill: #facc15;
+            fill-opacity: 1;
         }
 
         .storage.active {
@@ -147,8 +147,8 @@
             </rect>
             <rect width="4" height="24" x="14" y="0" fill="#838383">
             </rect>
-            <animateTransform id="beltForwardCBSystemModel" attributeName="patternTransform" type="translate"
-                from="0 0" to="24 0" dur="0.8s" begin="indefinite" repeatCount="indefinite" />
+            <animateTransform id="beltForwardCBSystemModel" attributeName="patternTransform" type="translate" from="0 0"
+                to="24 0" dur="0.8s" begin="indefinite" repeatCount="indefinite" />
             <animateTransform id="beltBackwardCBSystemModel" attributeName="patternTransform" type="translate"
                 from="0 0" to="-24 0" dur="0.8s" begin="indefinite" repeatCount="indefinite" />
         </pattern>
@@ -264,10 +264,10 @@
             </rect>
         </g>
         <g id="sensorsGroupCBSystemModel">
-            <rect width="20" height="80" id="sensorFeedCBSystemModel" x="30" y="-10"
+            <rect width="20" height="80" id="sensorSwapCBSystemModel" x="30" y="-10"
                 class="lightBarrier sensorInactive">
             </rect>
-            <rect width="20" height="80" id="sensorSwapCBSystemModel" x="220" y="-10"
+            <rect width="20" height="80" id="sensorFeedCBSystemModel" x="220" y="-10"
                 class="lightBarrier sensorInactive">
             </rect>
         </g>
@@ -355,10 +355,10 @@
             <rect width="68" height="15" id="sortingLineSensWhiteLightBarrierSLSystemModel" x="193" y="200"
                 class="lightBarrier sensorInactive" sortingLineSensWhiteLightBarrier="0">
             </rect>
-            <rect width="68" height="15" id="sortingLineSensBlueLightBarrierSLSystemModel" x="252" y="185"
+            <rect width="68" height="15" id="sortingLineSensBlueLightBarrierSLSystemModel" x="315" y="200"
                 class="lightBarrier sensorInactive" sortingLineSensBlueLightBarrier="0">
             </rect>
-            <rect width="68" height="15" id="sortingLineSensRedLightBarrierSLSystemModel" x="315" y="200"
+            <rect width="68" height="15" id="sortingLineSensRedLightBarrierSLSystemModel" x="252" y="185"
                 class="lightBarrier sensorInactive" sortingLineSensRedLightBarrier="0">
             </rect>
             <rect width="110" height="60" x="48" y="90" class="colorLightBarrier">
@@ -427,7 +427,7 @@
             </polygon>
         </g>
     </g>
-    <g id="VGRSystemModel_02" transform="matrix(-1,1.2246467991473532e-16,-1.2246467991473532e-16,-1,750,810)">
+    <g id="VGRSystemModel_02" transform="matrix(1,0,0,1,493,624)">
         <g>
             <rect width="257" height="186" class="woodBase" id="woodBaseVGRSystemModel_02" fill="red">
             </rect>
@@ -541,7 +541,7 @@
         </text>
     </g>
     <g id="popupVGRSystemModel_02" class="machinePopup"
-        transform="matrix(-1,1.2246467991473532e-16,-1.2246467991473532e-16,-1,750,810)">
+        transform="matrix(1,0,0,1,493,624)">
         <rect x="30" y="-80" width="180" height="60" class="machinePopupBox" />
         <text x="40" y="-58" class="machinePopupText">
             Gripper offline

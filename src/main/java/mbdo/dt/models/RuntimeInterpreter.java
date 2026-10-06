@@ -4,6 +4,7 @@ import mbdo.dt.models.SysMLBehavioralModel.StateMachine;
 import mbdo.dt.models.SysMLBehavioralModel.Transition;
 import mbdo.dt.utils.RuntimeInterpreterUtils;
 import mbdo.dt.utils.SysMLParserUtils;
+import mbdo.dt.utils.UnobservedAttributeException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -60,6 +61,9 @@ public class RuntimeInterpreter {
 
             return true;
 
+        } catch (UnobservedAttributeException e) {
+            logger.debug("Transition '{}' not enabled yet: {}", transition.name(), e.getMessage());
+            return false;
         } catch (IllegalArgumentException e) {
             logger.warn("Could not evaluate transition '{}': {}",
                     transition.name(), e.getMessage());

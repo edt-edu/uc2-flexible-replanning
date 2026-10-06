@@ -70,11 +70,19 @@ configuration:
         - mqttSourceTopic: "vacuumActValve"
           mqttTargetTopic: "TokenLocation/vgr2/vacuumActValve"
 
-    # sensor_MPS_in / sensor_MPS_out are not published by the platform gateway configuration yet.
+    # sensor_MPS_in / sensor_MPS_out are the MPS light barriers (false while a token is in front of them):
+    # the one in front of the oven (input) and the one at the end of the conveyor (output).
+    # The sensor_MPS_* sources are the synthetic topics published by tools/mqtt-publishers.
     - name: "TokenLocation/multiProcessingStation"
       dataTransformation: clone
       mqttSourcePrefix: "gateway/+/MPSystemModel/"
       dtEvents:
+        - mqttSourceTopic: "multiProcessingSensOven"
+          mqttTargetTopic: "TokenLocation/mpo/sensor_MPS_in"
+
+        - mqttSourceTopic: "multiProcessingSensEndConveyor"
+          mqttTargetTopic: "TokenLocation/mpo/sensor_MPS_out"
+
         - mqttSourceTopic: "sensor_MPS_in"
           mqttTargetTopic: "TokenLocation/mpo/sensor_MPS_in"
 

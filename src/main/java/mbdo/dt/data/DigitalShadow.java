@@ -4,8 +4,12 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.influxdb.client.InfluxDBClient;
+import com.influxdb.client.WriteApi;
+import com.influxdb.client.WriteOptions;
 import com.influxdb.client.domain.WritePrecision;
 import com.influxdb.client.write.Point;
+import com.influxdb.client.write.events.WriteErrorEvent;
+import jakarta.annotation.PreDestroy;
 import mbdo.dt.domain.AnomalyContext;
 import mbdo.dt.utils.TimestampParsingUtils;
 import mbdo.dt.utils.TypeDetector;
@@ -25,6 +29,11 @@ public class DigitalShadow {
     private final InfluxDBClient influxDBClient;
     private final String bucket;
     private final String org;
+    /**
+     * Batched, non-blocking writes for the measurements: a moving machine publishes hundreds of them per second,
+     * more than one HTTP round trip each can keep up with.
+     */
+    private final WriteApi measurementWriteApi;
 
     public DigitalShadow(
             InfluxDBClient influxDBClient,
@@ -34,6 +43,15 @@ public class DigitalShadow {
         this.influxDBClient = influxDBClient;
         this.bucket = bucket;
         this.org = org;
+        this.measurementWriteApi = influxDBClient.makeWriteApi(
+                WriteOptions.builder().batchSize(1000).flushInterval(200).build());
+        this.measurementWriteApi.listenEvents(WriteErrorEvent.class, event ->
+                logger.warn("failed to write measurements to InfluxDB: {}", event.getThrowable().getMessage()));
+    }
+
+    @PreDestroy
+    void close() {
+        measurementWriteApi.close();
     }
 
     public void processAndStoreMessage(
@@ -89,7 +107,7 @@ public class DigitalShadow {
         }
 
         try {
-            influxDBClient.getWriteApiBlocking().writePoint(bucket, org, point);
+            measurementWriteApi.writePoint(bucket, org, point);
         } catch (RuntimeException e) {
             logger.warn("failed to write measurement '{}' (topic '{}') to InfluxDB: {}",
                     measurement, topic, e.getMessage());

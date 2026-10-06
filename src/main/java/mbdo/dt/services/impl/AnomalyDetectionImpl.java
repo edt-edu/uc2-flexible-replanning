@@ -185,7 +185,27 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
 
     @Override
     public synchronized AnomalyEvaluationResult checkTimeTransitions() {
-        return evaluateObservation(Collections.emptyMap());
+        // Only the time-based rules can change without a new observation: guards are evaluated when values arrive.
+        if (activeStateMachine == null || currentState == null) {
+            return nonAnomalyResult(EvaluationStatus.MODEL_NOT_LOADED, null, null, null,
+                    "No anomaly detection state machine has been loaded.");
+        }
+        if (anomalyDetected) {
+            return nonAnomalyResult(EvaluationStatus.ANOMALY_DETECTED, currentState, currentState, null,
+                    "An anomaly has already been detected. Reset is required before continuing.");
+        }
+
+        long now = clockMillis.getAsLong();
+        AnomalyEvaluationResult result = evaluateStateDurationLimit(now);
+        if (result == null) {
+            result = evaluateTimeoutTransitions(now);
+        }
+        if (result == null) {
+            result = waitingResult(now);
+        }
+
+        anomalyReactionService.handleDetectedAnomaly(null, result, Collections.emptyMap());
+        return result;
     }
 
     @Override
