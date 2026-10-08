@@ -1,7 +1,6 @@
 package mbdo.dt.services;
 
 import mbdo.dt.domain.DataRequest;
-
 import java.util.Map;
 
 public interface RuntimeContext {

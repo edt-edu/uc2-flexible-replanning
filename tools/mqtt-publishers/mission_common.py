@@ -33,13 +33,11 @@ TOPICS = {
     "mpo.sensor_MPS_in":  f"{GATEWAY}/MPSystemModel/sensor_MPS_in",
     "mpo.sensor_MPS_out": f"{GATEWAY}/MPSystemModel/sensor_MPS_out",
 
-    "encoderTolerance":                   "TEST/TokenLocation/positioning/encoderTolerance",
-    "vgr1.3DPosition":                    "TEST/TokenLocation/positioning/vgr1_3DPosition",
-    "vgr1.expected3DPositionBlueOutput":  "TEST/TokenLocation/positioning/vgr1_expected3DPositionBlueOutput",
-    "vgr1.expected3DPositionWhiteOutput": "TEST/TokenLocation/positioning/vgr1_expected3DPositionWhiteOutput",
-    "vgr1.expected3DPositionRedOutput":   "TEST/TokenLocation/positioning/vgr1_expected3DPositionRedOutput",
-    "vgr2.3DPosition":                    "TEST/TokenLocation/positioning/vgr2_3DPosition",
-    "vgr2.expected3DPositionCBSwap":      "TEST/TokenLocation/positioning/vgr2_expected3DPositionCBSwap",
+    # encoder counters, compared with the VGRs' named positions by the pick-up transitions
+    "vgr1.rotEncoder": f"{GATEWAY}/VGRSystemModel_01/vacuumSensRotEncoderCounter",
+    "vgr1.armEncoder": f"{GATEWAY}/VGRSystemModel_01/vacuumSensArmEncoderCounter",
+    "vgr2.rotEncoder": f"{GATEWAY}/VGRSystemModel_02/vacuumSensRotEncoderCounter",
+    "vgr2.armEncoder": f"{GATEWAY}/VGRSystemModel_02/vacuumSensArmEncoderCounter",
 }
 
 

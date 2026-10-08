@@ -46,6 +46,87 @@ public class RuntimeInterpreter {
         return enabledTransitions;
     }
 
+    /** A clause of a guard: the clause itself, the observed value of each attribute it reads, and its result. */
+    public record GuardClauseEvaluation(String expected, List<FoundValue> found, Result result) {
+        public enum Result { TRUE, FALSE, UNOBSERVED, ERROR }
+    }
+
+    /** The value of an attribute read by a guard clause; {@code observed} is false if it has no value yet. */
+    public record FoundValue(String attribute, Object value, boolean observed) {
+        @Override
+        public String toString() {
+            return attribute + "=" + (observed ? value : "<unobserved>");
+        }
+    }
+
+    /** The clauses of the guard of a transition. */
+    public record GuardTransitionEvaluation(String transitionName, List<GuardClauseEvaluation> clauses) {
+        public boolean anyClauseTrue() {
+            return clauses.stream().anyMatch(clause -> clause.result() == GuardClauseEvaluation.Result.TRUE);
+        }
+    }
+
+    /**
+     * For diagnostics: each guard transition from {@code sourceState}, with every clause of its guard, the observed
+     * value of each attribute the clause reads (e.g. {@code sl.sensor_SL_blue=false}, or
+     * {@code vgr1.armEncoder=<unobserved>} when it has no value yet) and the clause result.
+     */
+    public List<GuardTransitionEvaluation> describeGuardTransitions(
+            StateMachine stateMachine,
+            String sourceState,
+            SysMLStructuralModel structuralModel,
+            List<SysMLStructuralModel> allStructuralModels,
+            Map<String, ?> observedValues
+    ) {
+        List<GuardTransitionEvaluation> evaluations = new ArrayList<>();
+        for (Transition transition : stateMachine.transitions()) {
+            if (!transition.sourceState().equals(sourceState)
+                    || RuntimeInterpreterUtils.isRelativeTimeTransition(transition)) {
+                continue;
+            }
+            List<GuardClauseEvaluation> clauses = new ArrayList<>();
+            for (SysMLBehavioralModel.Condition condition : transition.conditions()) {
+                if (condition == null) {
+                    continue;
+                }
+                List<String> operands = SysMLParserUtils.isFunctionCall(condition.rawExpression())
+                        ? SysMLParserUtils.functionArguments(condition.rawExpression())
+                        : List.of(String.valueOf(condition.leftOperand()), String.valueOf(condition.rightOperand()));
+                List<FoundValue> found = new ArrayList<>();
+                for (String operand : operands) {
+                    describeOperand(operand.trim(), observedValues).ifPresent(found::add);
+                }
+                GuardClauseEvaluation.Result result;
+                try {
+                    result = evaluateRuntimeCondition(condition, structuralModel, allStructuralModels, observedValues)
+                            ? GuardClauseEvaluation.Result.TRUE
+                            : GuardClauseEvaluation.Result.FALSE;
+                } catch (UnobservedAttributeException e) {
+                    result = GuardClauseEvaluation.Result.UNOBSERVED;
+                } catch (IllegalArgumentException e) {
+                    result = GuardClauseEvaluation.Result.ERROR;
+                }
+                clauses.add(new GuardClauseEvaluation(
+                        condition.rawExpression().replaceAll("\\s+", " ").trim(), found, result));
+            }
+            evaluations.add(new GuardTransitionEvaluation(transition.name(), clauses));
+        }
+        return evaluations;
+    }
+
+    /** The value of an attribute operand (not observed if it has no value yet), empty for a literal. */
+    private static Optional<FoundValue> describeOperand(String operand, Map<String, ?> observedValues) {
+        if (observedValues != null && observedValues.containsKey(operand)) {
+            return Optional.of(new FoundValue(operand, observedValues.get(operand), true));
+        }
+        try {
+            RuntimeInterpreterUtils.resolveRuntimeValue(operand, observedValues);
+            return Optional.empty();
+        } catch (UnobservedAttributeException e) {
+            return Optional.of(new FoundValue(operand, null, false));
+        }
+    }
+
     private boolean canFireGuardTransition(
             Transition transition,
             SysMLStructuralModel structuralModel,

@@ -3,6 +3,8 @@ package mbdo.dt.services.impl;
 import mbdo.dt.domain.AnomalyContext;
 import mbdo.dt.domain.DataRequest;
 import mbdo.dt.models.RuntimeInterpreter;
+import mbdo.dt.models.RuntimeInterpreter.GuardClauseEvaluation;
+import mbdo.dt.models.RuntimeInterpreter.GuardTransitionEvaluation;
 import mbdo.dt.models.StateMachineSelector;
 import mbdo.dt.models.SysMLBehavioralModel;
 import mbdo.dt.models.SysMLBehavioralModel.StateMachine;
@@ -168,19 +170,60 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
 
         AnomalyEvaluationResult result = evaluateCurrentState(safeObservedValues);
 
-        // if (logger.isDebugEnabled()) {
-        // logger.debug("observation {}={}, state {} -> {}, status={}, {}",
-        // triggeringRequest == null ? null : triggeringRequest.attributeName(),
-        // triggeringRequest == null ? null : triggeringRequest.value(),
-        // stateBeforeEvaluation,
-        // result.currentState(),
-        // result.status(),
-        // result.message());
-        // }
+        if (logger.isDebugEnabled()) {
+            List<GuardTransitionEvaluation> partlyTrueGuards = describeGuards(stateBeforeEvaluation, safeObservedValues)
+                    .stream()
+                    .filter(GuardTransitionEvaluation::anyClauseTrue)
+                    .toList();
+            if (!partlyTrueGuards.isEmpty()) {
+                logger.debug("observation {}={}, state {} -> {}, status={}, {}{}",
+                        triggeringRequest == null ? null : triggeringRequest.attributeName(),
+                        triggeringRequest == null ? null : triggeringRequest.value(),
+                        stateBeforeEvaluation,
+                        result.currentState(),
+                        result.status(),
+                        result.message(),
+                        formatGuards(partlyTrueGuards));
+            }
+        }
 
         anomalyReactionService.handleDetectedAnomaly(triggeringRequest, result, safeObservedValues);
 
         return result;
+    }
+
+    /** Each guard transition from {@code state}, with the value and result of each clause (for diagnostics). */
+    synchronized List<GuardTransitionEvaluation> describeGuards(String state, Map<String, ?> observedValues) {
+        if (activeStateMachine == null) {
+            return List.of();
+        }
+        return runtimeInterpreter.describeGuardTransitions(
+                activeStateMachine, state, structuralModel, allStructuralModels, observedValues);
+    }
+
+    private static final String BOLD_GREEN = "\u001B[1;32m";
+    private static final String BOLD_RED = "\u001B[1;31m";
+    private static final String RESET = "\u001B[0m";
+
+    /**
+     * Formats each transition, then each of its clauses as "expected: [clause], found: [values]", in bold green if
+     * true, bold red otherwise.
+     */
+    static String formatGuards(List<GuardTransitionEvaluation> guards) {
+        StringBuilder text = new StringBuilder();
+        for (GuardTransitionEvaluation guard : guards) {
+            text.append(System.lineSeparator()).append("  ").append(guard.transitionName()).append(':');
+            for (GuardClauseEvaluation clause : guard.clauses()) {
+                boolean satisfied = clause.result() == GuardClauseEvaluation.Result.TRUE;
+                text.append(System.lineSeparator()).append("    ")
+                        .append(satisfied ? BOLD_GREEN : BOLD_RED)
+                        .append("expected: [").append(clause.expected())
+                        .append("], found: ")
+                        .append(clause.found().stream().toList())
+                        .append(RESET);
+            }
+        }
+        return text.toString();
     }
 
     @Override

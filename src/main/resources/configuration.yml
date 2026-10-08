@@ -60,6 +60,13 @@ configuration:
         - mqttSourceTopic: "vacuumActValve"
           mqttTargetTopic: "TokenLocation/vgr1/vacuumActValve"
 
+        # encoder counters, compared with the VGR's named positions by the pick-up transitions
+        - mqttSourceTopic: "vacuumSensRotEncoderCounter"
+          mqttTargetTopic: "TokenLocation/vgr1/rotEncoder"
+
+        - mqttSourceTopic: "vacuumSensArmEncoderCounter"
+          mqttTargetTopic: "TokenLocation/vgr1/armEncoder"
+
     - name: "TokenLocation/vgr2"
       dataTransformation: clone
       mqttSourcePrefix: "gateway/+/VGRSystemModel_02/"
@@ -69,6 +76,13 @@ configuration:
 
         - mqttSourceTopic: "vacuumActValve"
           mqttTargetTopic: "TokenLocation/vgr2/vacuumActValve"
+
+        # encoder counters, compared with the VGR's named positions by the pick-up transitions
+        - mqttSourceTopic: "vacuumSensRotEncoderCounter"
+          mqttTargetTopic: "TokenLocation/vgr2/rotEncoder"
+
+        - mqttSourceTopic: "vacuumSensArmEncoderCounter"
+          mqttTargetTopic: "TokenLocation/vgr2/armEncoder"
 
     # sensor_MPS_in / sensor_MPS_out are the MPS light barriers (false while a token is in front of them):
     # the one in front of the oven (input) and the one at the end of the conveyor (output).
@@ -89,28 +103,3 @@ configuration:
         - mqttSourceTopic: "sensor_MPS_out"
           mqttTargetTopic: "TokenLocation/mpo/sensor_MPS_out"
 
-    # Test fixtures only: synthetic positioning values published by tools/mqtt-publishers.
-    - name: "TokenLocation/testFixtures/positioning"
-      dataTransformation: clone
-      mqttSourcePrefix: "TEST/TokenLocation/positioning/"
-      dtEvents:
-        - mqttSourceTopic: "encoderTolerance"
-          mqttTargetTopic: "TokenLocation/encoderTolerance"
-
-        - mqttSourceTopic: "vgr1_3DPosition"
-          mqttTargetTopic: "TokenLocation/vgr1/3DPosition"
-
-        - mqttSourceTopic: "vgr1_expected3DPositionBlueOutput"
-          mqttTargetTopic: "TokenLocation/vgr1/expected3DPositionBlueOutput"
-
-        - mqttSourceTopic: "vgr1_expected3DPositionWhiteOutput"
-          mqttTargetTopic: "TokenLocation/vgr1/expected3DPositionWhiteOutput"
-
-        - mqttSourceTopic: "vgr1_expected3DPositionRedOutput"
-          mqttTargetTopic: "TokenLocation/vgr1/expected3DPositionRedOutput"
-
-        - mqttSourceTopic: "vgr2_3DPosition"
-          mqttTargetTopic: "TokenLocation/vgr2/3DPosition"
-
-        - mqttSourceTopic: "vgr2_expected3DPositionCBSwap"
-          mqttTargetTopic: "TokenLocation/vgr2/expected3DPositionCBSwap"

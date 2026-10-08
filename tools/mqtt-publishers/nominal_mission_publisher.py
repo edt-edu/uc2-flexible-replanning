@@ -20,9 +20,8 @@ def run(client, step_delay):
     print("  expected: currentState -> TokenAtSortingLineBlueOutput")
 
     step("VGR1 grips the token at Blue output (Token_t2Blue)")
-    publish(client, "encoderTolerance", 50, "shared tolerance for every IsInTolerance(...) check")
-    publish(client, "vgr1.expected3DPositionBlueOutput", 1000)
-    publish(client, "vgr1.3DPosition", 1000, "dead on target, well within tolerance")
+    publish(client, "vgr1.rotEncoder", 2175, "VGR1 at its SL_OUTPUT_BLUE named position")
+    publish(client, "vgr1.armEncoder", 1500)
     publish(client, "vgr1.vacuumActCompressorOn", True)
     publish(client, "vgr1.vacuumActValve", True)
     publish(client, "sl.sensor_SL_blue", True, "clear - token picked up off the sensor")
@@ -45,8 +44,8 @@ def run(client, step_delay):
     print("  (ConveyorBeltSwapArrivalLimit = 10s starts now - the next step below is well under that)")
 
     step("VGR2 grips the token at the swap point (Token_t5)")
-    publish(client, "vgr2.expected3DPositionCBSwap", 2000)
-    publish(client, "vgr2.3DPosition", 2000, "dead on target, well within tolerance")
+    publish(client, "vgr2.rotEncoder", 2650, "VGR2 at its ALT_CB (conveyor belt swap) named position")
+    publish(client, "vgr2.armEncoder", 1350)
     publish(client, "vgr2.vacuumActCompressorOn", True)
     publish(client, "vgr2.vacuumActValve", True)
     publish(client, "cb.conveyorSensSwap", True, "swap beam broken - token detected")

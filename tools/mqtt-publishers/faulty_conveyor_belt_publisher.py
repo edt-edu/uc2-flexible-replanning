@@ -18,9 +18,8 @@ def run(client, step_delay, stall_seconds, heartbeat_interval):
     time.sleep(step_delay)
 
     step("VGR1 grips the token at Blue output (Token_t2Blue)")
-    publish(client, "encoderTolerance", 50)
-    publish(client, "vgr1.expected3DPositionBlueOutput", 1000)
-    publish(client, "vgr1.3DPosition", 1000)
+    publish(client, "vgr1.rotEncoder", 2175)  # VGR1 at its SL_OUTPUT_BLUE named position
+    publish(client, "vgr1.armEncoder", 1500)
     publish(client, "vgr1.vacuumActCompressorOn", True)
     publish(client, "vgr1.vacuumActValve", True)
     publish(client, "sl.sensor_SL_blue", True)
@@ -34,7 +33,7 @@ def run(client, step_delay, stall_seconds, heartbeat_interval):
     print("  expected: currentState -> TokenDroppedOffAtConveyorBeltFeed")
 
     step(f"Simulating a jammed belt: withholding cb.conveyorSensFeed=true for {stall_seconds}s "
-         f"(limit is 10s)")
+         f"(limit is 20s)")
     elapsed = 0.0
     while elapsed < stall_seconds:
         time.sleep(heartbeat_interval)
@@ -43,7 +42,7 @@ def run(client, step_delay, stall_seconds, heartbeat_interval):
                 f"heartbeat, {elapsed:.1f}s elapsed since entering TokenDroppedOffAtConveyorBeltFeed")
 
     print(f"\n  {stall_seconds}s elapsed with no belt movement - "
-          f"ConveyorBeltFeedDepartureLimit (10s) should have fired during the heartbeats above.")
+          f"ConveyorBeltFeedDepartureLimit (20s) should have fired during the heartbeats above.")
 
 
 def main():
@@ -51,8 +50,8 @@ def main():
     add_common_args(parser)
     parser.add_argument("--step-delay", type=float, default=1.5,
                          help="Seconds to wait after each early step before moving on (default: 1.5)")
-    parser.add_argument("--stall-seconds", type=float, default=14.0,
-                         help="How long to hold the token at the feed past the 10s limit (default: 14)")
+    parser.add_argument("--stall-seconds", type=float, default=24.0,
+                         help="How long to hold the token at the feed past the 20s limit (default: 24)")
     parser.add_argument("--heartbeat-interval", type=float, default=1.5,
                          help="How often to re-publish the unchanged feed reading while stalled, so "
                               "the DT gets a chance to notice the elapsed time (default: 1.5)")

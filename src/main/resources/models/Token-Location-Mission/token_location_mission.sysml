@@ -61,7 +61,6 @@ package token_definitions {
 
             in token : Token;
             in tokenSequencer : TokenSequencer;
-            in encoderTolerance : Positive;
 
             in vgr1 : VacuumGripperSystem::VacuumGripper::VacuumGripperMachine;
             in vgr2 : VacuumGripperSystem::VacuumGripper::VacuumGripperMachine;
@@ -113,40 +112,37 @@ package token_definitions {
                     and sl.sensor_SL_red == false
                 then TokenAtSortingLineRedOutput;
 
+            // Picked up at the VGR's named position SL_OUTPUT_BLUE: rotation and arm encoders within 100 counts of it (the
+            // vertical axis moves during the pick). Keep in sync with the calibrated named positions (dt-setups).
             transition Token_t2Blue
                 first TokenAtSortingLineBlueOutput
                 accept when sl.sensor_SL_blue == true
                     and vgr1.vacuumActCompressorOn == true
                     and vgr1.vacuumActValve == true
-                    and IsInTolerance(
-                        vgr1.3DPosition,
-                        vgr1.expected3DPositionBlueOutput,
-                        encoderTolerance
-                    )
+                    and IsInTolerance(vgr1.rotEncoder, 2175, 100)
+                    and IsInTolerance(vgr1.armEncoder, 1500, 100)
                 then TokenPickedUpByVGR1;
 
+            // Picked up at the VGR's named position SL_OUTPUT_WHITE: rotation and arm encoders within 100 counts of it (the
+            // vertical axis moves during the pick). Keep in sync with the calibrated named positions (dt-setups).
             transition Token_t2White
                 first TokenAtSortingLineWhiteOutput
                 accept when sl.sensor_SL_white == true
                     and vgr1.vacuumActCompressorOn == true
                     and vgr1.vacuumActValve == true
-                    and IsInTolerance(
-                        vgr1.3DPosition,
-                        vgr1.expected3DPositionWhiteOutput,
-                        encoderTolerance
-                    )
+                    and IsInTolerance(vgr1.rotEncoder, 2400, 100)
+                    and IsInTolerance(vgr1.armEncoder, 500, 100)
                 then TokenPickedUpByVGR1;
 
+            // Picked up at the VGR's named position SL_OUTPUT_RED: rotation and arm encoders within 100 counts of it (the
+            // vertical axis moves during the pick). Keep in sync with the calibrated named positions (dt-setups).
             transition Token_t2Red
                 first TokenAtSortingLineRedOutput
                 accept when sl.sensor_SL_red == true
                     and vgr1.vacuumActCompressorOn == true
                     and vgr1.vacuumActValve == true
-                    and IsInTolerance(
-                        vgr1.3DPosition,
-                        vgr1.expected3DPositionRedOutput,
-                        encoderTolerance
-                    )
+                    and IsInTolerance(vgr1.rotEncoder, 2270, 100)
+                    and IsInTolerance(vgr1.armEncoder, 970, 100)
                 then TokenPickedUpByVGR1;
 
             transition Token_t3
@@ -162,16 +158,15 @@ package token_definitions {
                     and cb.conveyorSensSwap == false
                 then TokenAtConveyorBeltSwap;
 
+            // Picked up at the VGR's named position ALT_CB (conveyor belt swap): rotation and arm encoders within 100 counts of it (the
+            // vertical axis moves during the pick). Keep in sync with the calibrated named positions (dt-setups).
             transition Token_t5
                 first TokenAtConveyorBeltSwap
                 accept when cb.conveyorSensSwap == true
                     and vgr2.vacuumActCompressorOn == true
                     and vgr2.vacuumActValve == true
-                    and IsInTolerance(
-                        vgr2.3DPosition,
-                        vgr2.expected3DPositionCBSwap,
-                        encoderTolerance
-                    )
+                    and IsInTolerance(vgr2.rotEncoder, 2650, 100)
+                    and IsInTolerance(vgr2.armEncoder, 1350, 100)
                 then TokenPickedUpByVGR2;
 
             transition Token_t6
@@ -206,7 +201,7 @@ package token_definitions {
 
         assert constraint ConveyorBeltSwapArrivalLimit : StateDurationLimit {
             in constrainedStateName = "TokenAtConveyorBeltSwap";
-            in maxDuration = 10 [s];
+            in maxDuration = 20 [s];
         }
     }
 }

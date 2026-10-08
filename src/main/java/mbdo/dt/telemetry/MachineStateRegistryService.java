@@ -48,6 +48,13 @@ public class MachineStateRegistryService {
         return Optional.of(toResponse(machineState));
     }
 
+    /** Latest state of this machine, if the frontend can display it. */
+    public Optional<MachineStateUpdateResponse> snapshot(String machineId) {
+        return Optional.ofNullable(machineId == null ? null : machineStates.get(machineId))
+                .filter(MachineState::isReadyForFrontend)
+                .map(MachineStateRegistryService::toResponse);
+    }
+
     /** Latest state of every machine the frontend can display, e.g. to initialize a newly connected client. */
     public List<MachineStateUpdateResponse> snapshots() {
         return machineStates.values().stream()
