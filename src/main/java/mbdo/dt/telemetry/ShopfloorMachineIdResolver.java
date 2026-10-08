@@ -2,24 +2,17 @@ package mbdo.dt.telemetry;
 
 import org.springframework.stereotype.Component;
 
-import java.util.Map;
 import java.util.Optional;
 
 /**
- * Maps a platform gateway topic ({@code gateway/<setup>/<MachineModel>/<attribute>}) onto the shopfloor
- * (machineId, attribute) pair expected by {@link mbdo.dt.telemetry.state.MachineStateFactory}.
- *
- * The gateway machine model names are used as machine ids as-is, except for the aliases below.
+ * Maps a platform gateway topic ({@code gateway/<setup>/<MachineModel>/<attribute>}) onto the (machineId, attribute)
+ * pair pushed to the shopfloor UI. The gateway machine model name is the machine id: the UI layout maps it onto its
+ * own machine ids ({@code telemetryId}).
  */
 @Component
 public class ShopfloorMachineIdResolver {
 
     private static final String GATEWAY_ROOT = "gateway";
-
-    /** Gateway machine model names that differ from the machine ids used by the frontend. */
-    private static final Map<String, String> GATEWAY_MODEL_TO_MACHINE_ID = Map.of(
-            "HBSystemModel", "HBWSystemModel"
-    );
 
     public record MachineAttribute(String machineId, String attribute) {
     }
@@ -34,7 +27,6 @@ public class ShopfloorMachineIdResolver {
             return Optional.empty();
         }
 
-        String machineId = GATEWAY_MODEL_TO_MACHINE_ID.getOrDefault(parts[2], parts[2]);
-        return Optional.of(new MachineAttribute(machineId, parts[3]));
+        return Optional.of(new MachineAttribute(parts[2], parts[3]));
     }
 }

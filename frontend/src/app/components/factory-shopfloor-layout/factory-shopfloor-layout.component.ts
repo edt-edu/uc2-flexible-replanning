@@ -1,10 +1,12 @@
-import { AfterViewInit, Component, ElementRef, OnDestroy, ViewChild } from '@angular/core';
+import { AfterViewInit, Component, ElementRef, NgZone, OnDestroy, ViewChild } from '@angular/core';
+import { LEGEND_COLORS, parseLayout, ShopfloorView } from '@mbdo/machines-svg-map';
 import { Subscription } from 'rxjs';
 
-import { ShopfloorMachineUpdate } from '../../models/machine-update.model';
-import { VacuumGripperModel } from '../../models/shopfloor/machines/models/VacummGripper.model';
 import { TokenLocation } from '../../models/token-location.model';
 import { MachineTelemetryStore } from '../../stores/machine-telemetry.store';
+
+/** Factory layout drawn by the shopfloor view (machines, telemetry ids, VGR arm calibrations, token locations). */
+const LAYOUT_URL = '/assets/shopfloor-layout.json';
 
 @Component({
     selector: 'app-factory-shopfloor-layout',
@@ -21,11 +23,11 @@ import { MachineTelemetryStore } from '../../stores/machine-telemetry.store';
 
                     <ul class="space-y-3 text-sm text-slate-700">
                         <li class="flex items-center gap-3">
-                            <span class="h-4 w-4 rounded border border-red-200" style="background:#dc2626"></span>
+                            <span class="h-4 w-4 rounded border border-red-200" [style.background]="colors.notOperational"></span>
                             <span>Not operational</span>
                         </li>
                         <li class="flex items-center gap-3">
-                            <span class="h-4 w-4 rounded border border-amber-200" style="background:#fef3c7"></span>
+                            <span class="h-4 w-4 rounded border border-amber-200" [style.background]="colors.notInitialized"></span>
                             <span>Not initialized</span>
                         </li>
                     </ul>
@@ -33,23 +35,23 @@ import { MachineTelemetryStore } from '../../stores/machine-telemetry.store';
                     <p class="mb-4 mt-6 text-xs text-slate-500">SVG Elements</p>
                     <ul class="space-y-3 text-sm text-slate-700">
                         <li class="flex items-center gap-3">
-                            <span class="h-4 w-4 rounded border border-blue-200" style="background:rgba(59, 130, 246, 0.3)"></span>
+                            <span class="h-4 w-4 rounded border border-blue-200" [style.background]="colors.accessZone"></span>
                             <span>Access Zone</span>
                         </li>
                         <li class="flex items-center gap-3">
-                            <span class="h-4 w-4 rounded border border-gray-400" style="background:#374151"></span>
+                            <span class="h-4 w-4 rounded border border-gray-400" [style.background]="colors.movingPart"></span>
                             <span>Moving Parts</span>
                         </li>
                         <li class="flex items-center gap-3">
-                            <span class="h-4 w-4 rounded border border-yellow-300" style="background:#fef9c3"></span>
+                            <span class="h-4 w-4 rounded border border-yellow-300" [style.background]="colors.lightBarrier"></span>
                             <span>Light Barrier Sensor</span>
                         </li>
                         <li class="flex items-center gap-3">
-                            <span class="h-4 w-4 rounded border border-yellow-500" style="background:#facc15"></span>
+                            <span class="h-4 w-4 rounded border border-yellow-500" [style.background]="colors.lightBarrierTriggered"></span>
                             <span>Light Barrier Triggered</span>
                         </li>
                         <li class="flex items-center gap-3">
-                            <span class="h-4 w-4 rounded border border-blue-300" style="background:#2563eb"></span>
+                            <span class="h-4 w-4 rounded border border-blue-300" [style.background]="colors.gripperVacuumOn"></span>
                             <span>Gripper Vacuum On</span>
                         </li>
                     </ul>
@@ -57,13 +59,13 @@ import { MachineTelemetryStore } from '../../stores/machine-telemetry.store';
                     <p class="mb-4 mt-6 text-xs text-slate-500">Token (inferred by the digital twin)</p>
                     <ul class="space-y-3 text-sm text-slate-700">
                         <li class="flex items-center gap-3">
-                            <span class="h-4 w-4 rounded-full border border-slate-700" style="background:#9ca3af"></span>
+                            <span class="h-4 w-4 rounded-full border border-slate-700" [style.background]="colors.tokenUnknownColor"></span>
                             <span>Color not known yet</span>
                         </li>
                         <li class="flex items-center gap-3">
-                            <span class="h-4 w-4 rounded-full border border-slate-700" style="background:#ffffff"></span>
-                            <span class="h-4 w-4 rounded-full border border-slate-700" style="background:#dc2626"></span>
-                            <span class="h-4 w-4 rounded-full border border-slate-700" style="background:#2563eb"></span>
+                            <span class="h-4 w-4 rounded-full border border-slate-700" [style.background]="colors.tokenWhite"></span>
+                            <span class="h-4 w-4 rounded-full border border-slate-700" [style.background]="colors.tokenRed"></span>
+                            <span class="h-4 w-4 rounded-full border border-slate-700" [style.background]="colors.tokenBlue"></span>
                             <span>White / red / blue</span>
                         </li>
                         <li class="flex items-center gap-3">
@@ -85,190 +87,59 @@ import { MachineTelemetryStore } from '../../stores/machine-telemetry.store';
 })
 export class FactoryShopfloorLayoutComponent implements AfterViewInit, OnDestroy {
     @ViewChild('svgContainer', { static: true }) svgContainer!: ElementRef<HTMLElement>;
-    private subscription: Subscription | null = null;
-    private tokenSubscription: Subscription | null = null;
-    private lastToken: TokenLocation | null = null;
+    readonly colors = LEGEND_COLORS;
     tokenDescription = 'No token';
 
-    /** Inferred token location -> SVG element the token is drawn on. */
-    private static readonly TOKEN_ANCHOR_BY_LOCATION: Record<string, string> = {
-        'sl-input': 'sortingLineSensInputLightBarrierSLSystemModel',
-        'sl-white': 'sortingLineSensWhiteLightBarrierSLSystemModel',
-        'sl-red': 'sortingLineSensRedLightBarrierSLSystemModel',
-        'sl-blue': 'sortingLineSensBlueLightBarrierSLSystemModel',
-        'vgr1': 'vgrEndEffectorVGRSystemModel_01',
-        'cb-feed': 'sensorFeedCBSystemModel',
-        'cb-swap': 'sensorSwapCBSystemModel',
-        'vgr2': 'vgrEndEffectorVGRSystemModel_02',
-        'mps-input': 'sensorInMPSystemModel',
-        'mps-output': 'sensorOutMPSystemModel'
-    };
-    private static readonly TOKEN_FILL_BY_COLOR: Record<string, string> = {
-        WHITE: '#ffffff',
-        RED: '#dc2626',
-        BLUE: '#2563eb'
-    };
-    private static readonly TOKEN_ELEMENT_ID = 'inferredToken';
-    private static readonly MACHINE_NAME_BY_ID: Record<string, string> = {
-        CBSystemModel: 'Conveyor Belt',
-        HBWSystemModel: 'High Bay Warehouse',
-        SLSystemModel: 'Sorting Line',
-        MPSystemModel: 'Multi Processing Station',
-        VGRSystemModel_01: 'Vacuum Gripper Robot 01',
-        VGRSystemModel_02: 'Vacuum Gripper Robot 02'
-    };
+    private view: ShopfloorView | null = null;
+    private subscription: Subscription | null = null;
+    private tokenSubscription: Subscription | null = null;
+    private destroyed = false;
 
-    // Cache machine elements for fast updates
-    private readonly machineCache = new Map<string, SVGGElement>();
-
-    constructor(private readonly telemetryStore: MachineTelemetryStore) { }
+    constructor(
+        private readonly telemetryStore: MachineTelemetryStore,
+        private readonly ngZone: NgZone
+    ) { }
 
     ngAfterViewInit(): void {
-        // Load SVG into container
-        fetch('/assets/shopfloor.svg')
-            .then(resp => resp.text())
-            .then(svgText => {
-                this.svgContainer.nativeElement.innerHTML = svgText;
-                const svg = this.svgContainer.nativeElement.querySelector<SVGSVGElement>('svg');
-                if (svg) {
-                    svg.setAttribute('width', '100%');
-                    svg.setAttribute('height', '100%');
-                    svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
-                }
-                this.cacheMachines();
-                this.renderToken();
-            });
-
-        // Subscribe to telemetry
-        this.subscription = this.telemetryStore.connect().subscribe({
-            next: update => this.applyUpdate(update),
-            error: err => console.error('[Shopfloor] Telemetry error:', err)
-        });
-        this.tokenSubscription = this.telemetryStore.tokenUpdates$.subscribe(token => {
-            this.lastToken = token;
-            this.renderToken();
-        });
+        fetch(LAYOUT_URL)
+            .then(response => response.json())
+            .then(raw => {
+                if (this.destroyed) return;
+                const { layout, warnings } = parseLayout(raw, LAYOUT_URL);
+                warnings.forEach(warning => console.warn(`[Shopfloor] ${warning}`));
+                this.view = this.ngZone.runOutsideAngular(() => ShopfloorView.mount(this.svgContainer.nativeElement, layout));
+                // connected once the view is there: the stream starts with the latest value of every attribute
+                this.connect();
+            })
+            .catch(error => console.error(`[Shopfloor] Cannot load the layout ${LAYOUT_URL}:`, error));
     }
 
     ngOnDestroy(): void {
+        this.destroyed = true;
         this.subscription?.unsubscribe();
         this.tokenSubscription?.unsubscribe();
         this.telemetryStore.disconnect();
+        this.view?.destroy();
     }
 
-    /** Cache machine elements by ID */
-    private cacheMachines(): void {
-        const svg = this.svgContainer.nativeElement.querySelector<SVGSVGElement>('svg');
-        if (!svg) return;
-
-        svg.querySelectorAll<SVGGElement>('g[id]').forEach(g => {
-            this.machineCache.set(g.id, g);
+    private connect(): void {
+        this.subscription = this.telemetryStore.connect().subscribe({
+            next: update => this.view?.applyAttribute(update.machineId, update.attribute, update.value, update.timestamp),
+            error: err => console.error('[Shopfloor] Telemetry error:', err)
         });
-
-        this.renderInitialMachineState();
-        this.attachMachineTooltips(svg);
-
-        console.log('[Shopfloor] Cached machine elements:', this.machineCache.size);
-    }
-
-    private renderInitialMachineState(): void {
-        console.log(this.machineCache);
-        this.machineCache.forEach((machineEl, machineId) => {
-            const machine = this.telemetryStore.getMachineById(machineId);
-            if (!machine) {
-                return;
-            }
-            if (machine instanceof VacuumGripperModel) {
-                // the arm is animated between updates: a token held by the gripper follows it on every frame
-                machine.onArmFrame = () => {
-                    if (this.lastToken?.location?.startsWith('vgr')) {
-                        this.renderToken();
-                    }
-                };
-            }
-            machine.render(machineEl);
-        });
-    }
-
-    private attachMachineTooltips(svg: SVGSVGElement): void {
-        const machineGroups = svg.querySelectorAll<SVGGElement>(':scope > g[id]');
-        machineGroups.forEach(group => {
-            if (!this.isMachineGroup(group.id)) {
-                return;
-            }
-
-            const tooltipText = FactoryShopfloorLayoutComponent.MACHINE_NAME_BY_ID[group.id] ?? group.id;
-            const existingTitle = group.querySelector(':scope > title');
-            if (existingTitle) {
-                existingTitle.textContent = tooltipText;
-                return;
-            }
-
-            const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
-            title.textContent = tooltipText;
-            group.insertBefore(title, group.firstChild);
-        });
-    }
-
-    private isMachineGroup(groupId: string): boolean {
-        return Object.hasOwn(FactoryShopfloorLayoutComponent.MACHINE_NAME_BY_ID, groupId);
+        this.tokenSubscription = this.telemetryStore.tokenUpdates$.subscribe(token => this.renderToken(token));
     }
 
     /** Draws the inferred token on the SVG element of its location (none when there is no token). */
-    private renderToken(): void {
-        const token = this.lastToken;
-        this.tokenDescription = !token || !token.location
-            ? `No token${token?.state ? ` (${token.state})` : ''}`
+    private renderToken(token: TokenLocation): void {
+        this.tokenDescription = !token.location
+            ? `No token${token.state ? ` (${token.state})` : ''}`
             : `${token.color ?? 'Unknown color'} token at ${token.location} (${token.state})${token.anomaly ? ' - anomaly' : ''}`;
-
-        const svg = this.svgContainer.nativeElement.querySelector<SVGSVGElement>('svg');
-        if (!svg) return;
-        svg.querySelector(`#${FactoryShopfloorLayoutComponent.TOKEN_ELEMENT_ID}`)?.remove();
-        if (!token?.location) return;
-
-        const anchorId = FactoryShopfloorLayoutComponent.TOKEN_ANCHOR_BY_LOCATION[token.location];
-        const anchor = anchorId ? svg.querySelector<SVGGraphicsElement>(`#${anchorId}`) : null;
-        if (!anchor) {
-            console.warn(`[Shopfloor] No SVG element for token location '${token.location}'`);
-            return;
-        }
-
-        // drawn next to the anchor, in the same coordinate system, so it follows the machine's transforms
-        const box = anchor.getBBox();
-        const svgNs = 'http://www.w3.org/2000/svg';
-        const circle = document.createElementNS(svgNs, 'circle');
-        circle.setAttribute('id', FactoryShopfloorLayoutComponent.TOKEN_ELEMENT_ID);
-        circle.setAttribute('cx', String(box.x + box.width / 2));
-        circle.setAttribute('cy', String(box.y + box.height / 2));
-        circle.setAttribute('r', '12');
-        circle.setAttribute('fill', token.color ? FactoryShopfloorLayoutComponent.TOKEN_FILL_BY_COLOR[token.color] : '#9ca3af');
-        circle.setAttribute('stroke', token.anomaly ? '#dc2626' : '#111827');
-        circle.setAttribute('stroke-width', token.anomaly ? '3' : '2');
-        if (token.anomaly) {
-            circle.setAttribute('stroke-dasharray', '4 3');
-        }
-        const anchorTransform = anchor.getAttribute('transform');
-        if (anchorTransform && anchor.tagName.toLowerCase() !== 'g') {
-            circle.setAttribute('transform', anchorTransform);
-        }
-        const title = document.createElementNS(svgNs, 'title');
-        title.textContent = this.tokenDescription;
-        circle.appendChild(title);
-
-        const container = anchor.tagName.toLowerCase() === 'g' ? anchor : anchor.parentNode;
-        container?.appendChild(circle);
-    }
-
-    /**
-     * Apply a telemetry update to a machine
-     */
-    private applyUpdate(update: ShopfloorMachineUpdate): void {
-        const machine = this.telemetryStore.getMachineById(update.machineId);
-        if (!machine) return;
-
-        const machineEl = this.machineCache.get(update.machineId);
-        if (!machineEl) return;
-
-        machine.render(machineEl); // model handles the rendering (a VGR then follows its arm, see onArmFrame)
+        this.view?.setToken({
+            location: token.location,
+            color: token.color,
+            anomaly: token.anomaly,
+            title: this.tokenDescription
+        });
     }
 }

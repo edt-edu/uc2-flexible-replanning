@@ -5,23 +5,23 @@ import org.springframework.stereotype.Component;
 import java.time.Instant;
 
 /**
- * Feeds the shopfloor machine-state registry/SSE stream from the platform gateway topics,
+ * Feeds the shopfloor SSE stream with the raw platform gateway measurements,
  * decoupled from {@link mbdo.dt.orchestrator.DtEngine}'s anomaly/replanning simulation.
  */
 @Component
 public class MachineTelemetryBridge {
 
     private final ShopfloorMachineIdResolver machineIdResolver;
-    private final MachineStateRegistryService machineStateRegistryService;
+    private final MachineAttributeRegistryService machineAttributeRegistryService;
     private final MachineTelemetrySseService machineTelemetrySseService;
 
     public MachineTelemetryBridge(
             ShopfloorMachineIdResolver machineIdResolver,
-            MachineStateRegistryService machineStateRegistryService,
+            MachineAttributeRegistryService machineAttributeRegistryService,
             MachineTelemetrySseService machineTelemetrySseService
     ) {
         this.machineIdResolver = machineIdResolver;
-        this.machineStateRegistryService = machineStateRegistryService;
+        this.machineAttributeRegistryService = machineAttributeRegistryService;
         this.machineTelemetrySseService = machineTelemetrySseService;
     }
 
@@ -31,12 +31,12 @@ public class MachineTelemetryBridge {
                     ? Instant.ofEpochMilli(timestampMillis)
                     : Instant.now();
 
-            machineStateRegistryService.applyAttribute(
+            machineAttributeRegistryService.record(
                     machineAttribute.machineId(),
                     machineAttribute.attribute(),
                     value,
                     timestamp
-            ).ifPresent(machineTelemetrySseService::broadcastMachineUpdate);
+            ).ifPresent(machineTelemetrySseService::broadcastMachineAttribute);
         });
     }
 }
