@@ -6,6 +6,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
 import java.util.Map;
@@ -30,32 +31,66 @@ public class ReplanningIncidentRegistryService {
     private volatile ReplanningIncidentResponse currentIncident;
 
     public synchronized ReplanningIncidentResponse openIncident(AnomalyContext context) {
-        long id = idSequence.getAndIncrement();
-        Instant startTime = context.detectionTimestamp() != null ? context.detectionTimestamp() : Instant.now();
-
-        ReplanningIncidentResponse incident = new ReplanningIncidentResponse(
-                id,
-                context.affectedComponent(),
-                context.message(),
-                "Investigate and acknowledge the anomaly on " + context.affectedComponent(),
-                ReplanningIncidentStatus.OPEN,
-                startTime,
-                Instant.now(),
-                null,
-                null
-        );
-
-        originatingContexts.put(id, context);
+        ReplanningIncidentResponse incident = newIncident(context, ReplanningIncidentStatus.OPEN, Instant.now(), null,
+                null, null, null);
         currentIncident = incident;
         return incident;
     }
 
+    /**
+     * Restores the incidents of the journal (InfluxDB) at startup, oldest first, before the ones of this run: they are
+     * resolved (or were never, the digital twin stopped meanwhile).
+     */
+    public synchronized void restoreHistory(List<RestoredIncident> journal) {
+        List<ReplanningIncidentResponse> restored = journal.stream()
+                .map(r -> newIncident(r.anomaly(), ReplanningIncidentStatus.RESOLVED, r.anomaly().detectionTimestamp(),
+                        r.resolvedAt(), r.comment(), r.anomaly().replanningPlan(), r.anomaly().recoveryPlan()))
+                .toList();
+        // behind the incidents of this run, newest first
+        for (int i = restored.size() - 1; i >= 0; i--) {
+            history.addLast(restored.get(i));
+        }
+        while (history.size() > MAX_HISTORY) {
+            history.removeLast();
+        }
+    }
+
+    /** An incident of the journal: its anomaly (with its replannings) and its correction. */
+    public record RestoredIncident(AnomalyContext anomaly, Instant resolvedAt, String comment) {
+    }
+
+    private ReplanningIncidentResponse newIncident(AnomalyContext context, ReplanningIncidentStatus status,
+                                                   Instant createdAt, Instant resolvedAt, String comment,
+                                                   ReplanningPlan plan, ReplanningPlan recoveryPlan) {
+        long id = idSequence.getAndIncrement();
+        Instant startTime = context.detectionTimestamp() != null ? context.detectionTimestamp() : Instant.now();
+        originatingContexts.put(id, context);
+        return new ReplanningIncidentResponse(
+                id,
+                context.affectedComponent(),
+                context.message(),
+                "Investigate and acknowledge the anomaly on " + context.affectedComponent(),
+                status,
+                startTime,
+                createdAt,
+                resolvedAt,
+                comment,
+                plan,
+                recoveryPlan
+        );
+    }
+
     public synchronized Optional<ReplanningIncidentResponse> resolveCurrentIncident(long id, String comment) {
+        return resolveCurrentIncident(id, comment, Instant.now());
+    }
+
+    public synchronized Optional<ReplanningIncidentResponse> resolveCurrentIncident(long id, String comment,
+                                                                                    Instant resolvedAt) {
         if (currentIncident == null || currentIncident.getId() != id) {
             return Optional.empty();
         }
 
-        ReplanningIncidentResponse resolved = currentIncident.resolved(comment, Instant.now());
+        ReplanningIncidentResponse resolved = currentIncident.resolved(comment, resolvedAt);
         currentIncident = null;
 
         history.addFirst(resolved);
@@ -81,6 +116,40 @@ public class ReplanningIncidentRegistryService {
         }
         currentIncident = currentIncident.withPlan(plan);
         return Optional.of(currentIncident);
+    }
+
+    /**
+     * Attaches the recovery plan to the resolved incident raised by the anomaly {@code anomalyId}.
+     *
+     * @return the updated incident, or empty if it isn't in the history
+     */
+    public synchronized Optional<ReplanningIncidentResponse> attachRecoveryPlan(String anomalyId,
+                                                                                ReplanningPlan plan) {
+        List<ReplanningIncidentResponse> incidents = new ArrayList<>(history);
+        for (int i = 0; i < incidents.size(); i++) {
+            AnomalyContext context = originatingContexts.get(incidents.get(i).getId());
+            if (context != null && context.anomalyId().equals(anomalyId)) {
+                ReplanningIncidentResponse updated = incidents.get(i).withRecoveryPlan(plan);
+                incidents.set(i, updated);
+                history.clear();
+                history.addAll(incidents);
+                return Optional.of(updated);
+            }
+        }
+        return Optional.empty();
+    }
+
+    /** The incident raised by the anomaly {@code anomalyId} (open or resolved), and its anomaly. */
+    public synchronized Optional<ReplanningIncidentResponse> findByAnomaly(String anomalyId) {
+        if (currentIncident != null && isRaisedBy(currentIncident, anomalyId)) {
+            return Optional.of(currentIncident);
+        }
+        return history.stream().filter(incident -> isRaisedBy(incident, anomalyId)).findFirst();
+    }
+
+    private boolean isRaisedBy(ReplanningIncidentResponse incident, String anomalyId) {
+        AnomalyContext context = originatingContexts.get(incident.getId());
+        return context != null && context.anomalyId().equals(anomalyId);
     }
 
     public Optional<AnomalyContext> getOriginatingContext(long id) {

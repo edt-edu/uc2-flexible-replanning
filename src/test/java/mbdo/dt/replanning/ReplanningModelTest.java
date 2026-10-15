@@ -20,12 +20,26 @@ class ReplanningModelTest {
     @Test
     void theConveyorBeltFailureStrategyIsTriggeredByTheFeedDepartureLimit() {
         Strategy strategy = model.findTriggeredStrategy(
-                "ConveyorBeltFeedDepartureLimit", "TokenDroppedOffAtConveyorBeltFeed").orElseThrow();
+                "ConveyorBeltSwapArrivalLimit", "TokenDroppedOffAtConveyorBeltFeed").orElseThrow();
 
         assertEquals("cbFailure", strategy.name());
         assertEquals(List.of(ReplanningTestModels.CB), strategy.stoppedMachines());
         assertEquals(List.of("ZoneCB_NominalToDeadCB", "VGR1_NominalToCBFailure", "VGR2_NominalToCBFailure"),
                 strategy.migrations(), "the zone first: it answers the grippers once they are migrated");
+        assertEquals("cbRepaired", strategy.recoveryStrategy());
+    }
+
+    @Test
+    void theRecoveryRestartsTheStoppedBeltLastAndIsNeverTriggeredByAnAnomaly() {
+        Strategy recovery = model.findStrategy("cbRepaired").orElseThrow();
+
+        assertEquals("CB_RestartNominal", recovery.migrations().get(recovery.migrations().size() - 1));
+        assertNull(model.migrations().get("CB_RestartNominal").fromMission(), "the belt runs no mission");
+        assertEquals("ZoneMissionCBNominal", model.migrations().get("ZoneCB_DeadCBToNominal").toMission());
+        assertEquals("cbFailure", model.findTriggeredStrategy("ConveyorBeltSwapArrivalLimit", null)
+                .orElseThrow().name());
+        assertEquals("cbFailure", model.findTriggeredStrategy("ConveyorBeltFeedDepartureLimit", null)
+                .orElseThrow().name(), "a belt that doesn't start, or stops on the way: the same replanning");
     }
 
     @Test
@@ -35,14 +49,14 @@ class ReplanningModelTest {
         assertEquals(ReplanningTestModels.VGR1, migration.machine());
         assertEquals("VacuumGripper1NominalMission", migration.fromMission());
         assertEquals("VacuumGripper1CBFailureMission", migration.toMission());
-        assertEquals(List.of("RetractFromCBCMD"), migration.waitStates());
+        assertEquals(List.of("PlaceConveyorBeltFeed", "RetractFromCBCMD"), migration.waitStates());
         assertEquals("AskCBSlot", migration.rulesFrom("IdlePicked").get(0).toState());
         assertEquals(List.of(), migration.rulesFrom("PickColorCMD"), "same state");
     }
 
     @Test
     void aRuleWithoutFirstLeavesAnyStateWithItsGuardInTheOrderOfTheModel() {
-        List<Rule> rules = model.migrations().get("ZoneCB_NominalToDeadCB").rulesFrom("IdleBusy");
+        List<Rule> rules = model.migrations().get("ZoneCB_NominalToDeadCB").rulesFrom("TokenOnSwap");
 
         assertEquals(List.of("zone_tokensOnSwapAndFeed", "zone_tokenOnFeed", "zone_tokenOnSwap", "zone_empty"),
                 rules.stream().map(Rule::name).toList(), "the most specific guard first");

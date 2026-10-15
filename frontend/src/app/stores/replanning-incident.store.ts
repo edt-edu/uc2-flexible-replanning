@@ -30,6 +30,10 @@ export class ReplanningIncidentStore {
             updated.subscribe(incident => {
                 if (this.currentIncidentState()?.id === incident.id) {
                     this.currentIncidentState.set(incident);
+                } else {
+                    // a resolved incident: its recovery (back to the nominal missions) progresses
+                    this.historyState.update(history =>
+                        history.map(past => past.id === incident.id ? incident : past));
                 }
             }),
             resolved.subscribe(incident => {

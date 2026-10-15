@@ -77,6 +77,7 @@ package token_definitions {
 
             state TokenPickedUpByVGR1;
             state TokenDroppedOffAtConveyorBeltFeed;
+            state TokenOnConveyorBelt;
             state TokenAtConveyorBeltSwap;
             state TokenPickedUpByVGR2;
             state TokenDroppedOffAtMPOInput;
@@ -112,8 +113,6 @@ package token_definitions {
                     and sl.sensor_SL_red == false
                 then TokenAtSortingLineRedOutput;
 
-            // Picked up at the VGR's named position SL_OUTPUT_BLUE: rotation and arm encoders within 100 counts of it (the
-            // vertical axis moves during the pick). Keep in sync with the calibrated named positions (dt-setups).
             transition Token_t2Blue
                 first TokenAtSortingLineBlueOutput
                 accept when sl.sensor_SL_blue == true
@@ -123,8 +122,6 @@ package token_definitions {
                     and IsInTolerance(vgr1.armEncoder, 1500, 100)
                 then TokenPickedUpByVGR1;
 
-            // Picked up at the VGR's named position SL_OUTPUT_WHITE: rotation and arm encoders within 100 counts of it (the
-            // vertical axis moves during the pick). Keep in sync with the calibrated named positions (dt-setups).
             transition Token_t2White
                 first TokenAtSortingLineWhiteOutput
                 accept when sl.sensor_SL_white == true
@@ -134,8 +131,6 @@ package token_definitions {
                     and IsInTolerance(vgr1.armEncoder, 500, 100)
                 then TokenPickedUpByVGR1;
 
-            // Picked up at the VGR's named position SL_OUTPUT_RED: rotation and arm encoders within 100 counts of it (the
-            // vertical axis moves during the pick). Keep in sync with the calibrated named positions (dt-setups).
             transition Token_t2Red
                 first TokenAtSortingLineRedOutput
                 accept when sl.sensor_SL_red == true
@@ -155,11 +150,13 @@ package token_definitions {
             transition Token_t4
                 first TokenDroppedOffAtConveyorBeltFeed
                 accept when cb.conveyorSensFeed == true
-                    and cb.conveyorSensSwap == false
+                then TokenOnConveyorBelt;
+
+            transition Token_t4Swap
+                first TokenOnConveyorBelt
+                accept when cb.conveyorSensSwap == false
                 then TokenAtConveyorBeltSwap;
 
-            // Picked up at the VGR's named position ALT_CB (conveyor belt swap): rotation and arm encoders within 100 counts of it (the
-            // vertical axis moves during the pick). Keep in sync with the calibrated named positions (dt-setups).
             transition Token_t5
                 first TokenAtConveyorBeltSwap
                 accept when cb.conveyorSensSwap == true
@@ -196,12 +193,12 @@ package token_definitions {
 
         assert constraint ConveyorBeltFeedDepartureLimit : StateDurationLimit {
             in constrainedStateName = "TokenDroppedOffAtConveyorBeltFeed";
-            in maxDuration = 10 [s];
+            in maxDuration = 15 [s];
         }
 
         assert constraint ConveyorBeltSwapArrivalLimit : StateDurationLimit {
-            in constrainedStateName = "TokenAtConveyorBeltSwap";
-            in maxDuration = 20 [s];
+            in constrainedStateName = "TokenOnConveyorBelt";
+            in maxDuration = 10 [s];
         }
     }
 }

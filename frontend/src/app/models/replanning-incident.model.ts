@@ -16,6 +16,8 @@ export interface ReplanningIncident {
     resolvedAt?: string;
     operatorComment?: string;
     replanningPlan?: ReplanningPlan | null;
+    /** The recovery executed once the operator repaired the failure: back to the nominal missions. */
+    recoveryPlan?: ReplanningPlan | null;
 }
 
 /** Mirrors the backend's mbdo.dt.replanning.ReplanningPlan: what the digital twin does to the SCADA, at once. */

@@ -2,7 +2,7 @@
 export interface TokenLocation {
     /** Current state of the most recent token's run */
     state: string | null;
-    /** sl-input, sl-white, sl-red, sl-blue, vgr1, cb-feed, cb-swap, vgr2, mps-input, mps-output; null when no token */
+    /** sl-input, sl-white, sl-red, sl-blue, vgr1, cb-feed, cb-belt, cb-swap, vgr2, mps-input, mps-output; null when no token */
     location: string | null;
     /** WHITE, RED or BLUE once the token was sorted, null before */
     color: 'WHITE' | 'RED' | 'BLUE' | null;

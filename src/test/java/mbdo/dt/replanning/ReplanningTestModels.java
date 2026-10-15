@@ -13,19 +13,13 @@ public final class ReplanningTestModels {
     public static final String VGR2 = "REN_MISSION_01/VGR02";
     public static final String ZONE_CB = "ZoneCB";
 
-    public static final List<String> VGR1_NOMINAL_STATES = List.of("SetupCMD", "StandbyCMD", "Idle", "PickColorCMD",
-            "IdlePicked", "PlaceConveyorBeltFeed", "RetractFromCBCMD", "CBZoneReleased", "ReturnToStandbyCMD");
-    public static final List<String> VGR1_CB_FAILURE_STATES = List.of("SetupCMD", "StandbyCMD", "AskSortingLine", "Idle",
-            "PickColorCMD", "AskCBSlot", "SelectCBSlot", "WaitForFreeCBSlot", "PlaceConveyorBeltCMD",
-            "RetractFromCBCMD", "CBZoneReleased", "ReturnToStandbyCMD");
-    public static final List<String> VGR2_NOMINAL_STATES = List.of("SetupCMD", "StandbyCMD", "Idle",
-            "WaitForCBZoneAcquisition", "PickCBswapCMD", "RetractFromCBCMD", "CBZoneReleased", "StandbyBeforeMPSCMD",
-            "WaitForMPSZoneAcquisition", "PlaceMPSinCMD", "RetractFromMPSCMD", "MPSZoneReleased",
-            "ReturnToStandbyCMD");
+    public static final List<String> VGR1_NOMINAL_STATES = List.of("SetupCMD", "StandbyCMD", "AskSortingLine", "Idle", "PickColorCMD", "IdlePicked", "StandbyWithTokenCMD", "AskCBSlotInStandby", "SelectCBSlotInStandby", "WaitForFreeCBSlot", "PlaceConveyorBeltFeed", "RetractFromCBCMD", "CBZoneReleased", "ReturnToStandbyCMD");
+    public static final List<String> VGR1_CB_FAILURE_STATES = List.of("SetupCMD", "StandbyCMD", "AskSortingLine", "Idle", "PickColorCMD", "AskCBSlot", "SelectCBSlot", "StandbyWithTokenCMD", "AskCBSlotInStandby", "SelectCBSlotInStandby", "WaitForFreeCBSlot", "PlaceConveyorBeltCMD", "RetractFromCBCMD", "CBZoneReleased", "ReturnToStandbyCMD");
+    public static final List<String> VGR2_NOMINAL_STATES = List.of("SetupCMD", "StandbyCMD", "CheckSwap", "Idle", "WaitForCBZoneAcquisition", "PickCBswapCMD", "RetractFromCBCMD", "CBZoneReleased", "StandbyBeforeMPSCMD", "WaitForMPSZoneAcquisition", "PlaceMPSinCMD", "RetractFromMPSCMD", "MPSZoneReleased", "ReturnToStandbyCMD");
     public static final List<String> VGR2_CB_FAILURE_STATES = List.of("SetupCMD", "StandbyCMD", "CheckCB", "SelectCBSlot",
             "Idle", "PickCBCMD", "RetractFromCBCMD", "CBZoneReleased", "WaitForMPSZoneAcquisition", "PlaceMPSinCMD",
             "RetractFromMPSCMD", "MPSZoneReleased", "ReturnToStandbyCMD");
-    public static final List<String> ZONE_CB_NOMINAL_STATES = List.of("IdleFree", "IdleBusy", "IdleBusyRequested");
+    public static final List<String> ZONE_CB_NOMINAL_STATES = List.of("CheckBelt", "Empty", "TokenOnFeed", "TokenOnSwap", "SwapThenFeed", "VGR1PlacingOnFeed", "VGR1PlacingOnFeedTokenMovedToSwap", "VGR1PlacingOnFeedAfterSwap", "VGR2PickingLastToken", "VGR2PickingSwapBeforeFeed", "VGR2PickingSwapFeedMovedToSwap");
     public static final List<String> ZONE_DEAD_CB_STATES = List.of("Empty", "TokenOnFeed", "TokenOnSwap", "FeedThenSwap",
             "SwapThenFeed", "VGR1PlacingOnSwap", "VGR1PlacingOnSwapAfterFeed", "VGR1PlacingOnFeedAfterSwap",
             "VGR2PickingLastToken", "VGR2PickingFeedBeforeSwap", "VGR2PickingSwapBeforeFeed");

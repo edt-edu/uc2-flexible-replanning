@@ -4,6 +4,7 @@ import { Component, computed, inject, OnDestroy, OnInit, signal } from '@angular
 import { NavbarComponent, NavbarRole } from '../../components/navbar/navbar.component';
 import { ReplanningIncidentPopupComponent } from '../../components/replanning-incident-popup/replanning-incident-popup.component';
 import { FactoryShopfloorLayoutComponent } from '../../components/factory-shopfloor-layout/factory-shopfloor-layout.component';
+import { IncidentTimelineComponent } from '../../components/incident-timeline/incident-timeline.component';
 import { ReplanningIncidentStore } from '../../stores/replanning-incident.store';
 
 const ROLE_SESSION_STORAGE_KEY = 'factorySupervisionRole';
@@ -11,7 +12,7 @@ const ROLE_SESSION_STORAGE_KEY = 'factorySupervisionRole';
 @Component({
     selector: 'app-factory-supervision',
     standalone: true,
-    imports: [NavbarComponent, ReplanningIncidentPopupComponent, FactoryShopfloorLayoutComponent],
+    imports: [NavbarComponent, ReplanningIncidentPopupComponent, FactoryShopfloorLayoutComponent, IncidentTimelineComponent],
     templateUrl: './factory-supervision.component.html',
     styleUrls: ['./factory-supervision.component.css']
 })

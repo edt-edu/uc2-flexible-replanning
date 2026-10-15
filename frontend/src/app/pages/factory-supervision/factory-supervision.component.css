@@ -7,6 +7,21 @@
 .shopfloor-full {
     display: block;
     height: 100%;
+    min-height: 0;
+}
+
+/* Factory Manager: shopfloor on top, incident timeline docked below it. */
+.factory-page.manager-view {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto;
+    gap: 0.75rem;
+    padding-bottom: 0.75rem;
+}
+
+.incident-timeline-dock {
+    max-height: 50vh;
+    overflow-y: auto;
+    margin: 0 0.75rem;
 }
 
 .panel {

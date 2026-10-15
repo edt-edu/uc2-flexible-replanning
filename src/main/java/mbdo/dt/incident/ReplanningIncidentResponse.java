@@ -22,6 +22,7 @@ public class ReplanningIncidentResponse {
     private final Instant resolvedAt;
     private final String operatorComment;
     private final ReplanningPlan replanningPlan;
+    private final ReplanningPlan recoveryPlan;
 
     public ReplanningIncidentResponse(
             long id,
@@ -34,7 +35,8 @@ public class ReplanningIncidentResponse {
             Instant resolvedAt,
             String operatorComment
     ) {
-        this(id, machineId, message, requiredAction, status, startTime, createdAt, resolvedAt, operatorComment, null);
+        this(id, machineId, message, requiredAction, status, startTime, createdAt, resolvedAt, operatorComment, null,
+                null);
     }
 
     public ReplanningIncidentResponse(
@@ -47,7 +49,8 @@ public class ReplanningIncidentResponse {
             Instant createdAt,
             Instant resolvedAt,
             String operatorComment,
-            ReplanningPlan replanningPlan
+            ReplanningPlan replanningPlan,
+            ReplanningPlan recoveryPlan
     ) {
         this.id = id;
         this.machineId = machineId;
@@ -59,6 +62,7 @@ public class ReplanningIncidentResponse {
         this.resolvedAt = resolvedAt;
         this.operatorComment = operatorComment;
         this.replanningPlan = replanningPlan;
+        this.recoveryPlan = recoveryPlan;
     }
 
     public long getId() {
@@ -102,17 +106,29 @@ public class ReplanningIncidentResponse {
         return replanningPlan;
     }
 
+    /** The recovery executed once the operator repaired the failure (back to the nominal missions), null if none. */
+    public ReplanningPlan getRecoveryPlan() {
+        return recoveryPlan;
+    }
+
     public ReplanningIncidentResponse resolved(String comment, Instant resolvedAt) {
         return new ReplanningIncidentResponse(
                 id, machineId, message, requiredAction, ReplanningIncidentStatus.RESOLVED,
-                startTime, createdAt, resolvedAt, comment, replanningPlan
+                startTime, createdAt, resolvedAt, comment, replanningPlan, recoveryPlan
         );
     }
 
     public ReplanningIncidentResponse withPlan(ReplanningPlan plan) {
         return new ReplanningIncidentResponse(
                 id, machineId, message, requiredAction, status,
-                startTime, createdAt, resolvedAt, operatorComment, plan
+                startTime, createdAt, resolvedAt, operatorComment, plan, recoveryPlan
+        );
+    }
+
+    public ReplanningIncidentResponse withRecoveryPlan(ReplanningPlan plan) {
+        return new ReplanningIncidentResponse(
+                id, machineId, message, requiredAction, status,
+                startTime, createdAt, resolvedAt, operatorComment, replanningPlan, plan
         );
     }
 }

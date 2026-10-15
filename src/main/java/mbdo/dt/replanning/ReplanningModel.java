@@ -29,20 +29,23 @@ public record ReplanningModel(List<Strategy> strategies, Map<String, Migration> 
      * A reaction to an anomaly: stops the missions of the failed machines and migrates the other machines to
      * alternative missions.
      *
-     * @param triggerConstraint the violated constraint that triggers it (e.g. "ConveyorBeltFeedDepartureLimit"), or null
+     * @param triggerConstraints the violated constraints that trigger it (e.g. "ConveyorBeltFeedDepartureLimit"), if any
      * @param triggerState      the monitored state in which the anomaly was detected that triggers it, or null
      * @param migrations        the names of the {@link Migration}s applied, in this order
+     * @param recoveryStrategy  the strategy executed when the operator repaired the failure (back to the nominal
+     *                          missions), or null
      */
     public record Strategy(
             String name,
             String description,
-            String triggerConstraint,
+            List<String> triggerConstraints,
             String triggerState,
             List<String> stoppedMachines,
-            List<String> migrations
+            List<String> migrations,
+            String recoveryStrategy
     ) {
         boolean isTriggeredBy(String violatedConstraint, String anomalyState) {
-            return (triggerConstraint != null && triggerConstraint.equals(violatedConstraint))
+            return triggerConstraints.contains(violatedConstraint)
                     || (triggerState != null && triggerState.equals(anomalyState));
         }
     }
@@ -50,9 +53,11 @@ public record ReplanningModel(List<Strategy> strategies, Map<String, Migration> 
     /**
      * Moves one SCADA machine from the mission it runs to an alternative mission.
      *
-     * @param machine    the SCADA machine (logical name in the mission extension, e.g. "REN_MISSION_01/VGR01")
-     * @param rules      in the order of the model
-     * @param waitStates the states of {@code fromMission} the machine isn't migrated from: the replanning waits
+     * @param machine     the SCADA machine (logical name in the mission extension, e.g. "REN_MISSION_01/VGR01")
+     * @param fromMission null: the machine runs no mission (e.g. it was stopped), {@code toMission} starts from its
+     *                    initial state
+     * @param rules       in the order of the model
+     * @param waitStates  the states of {@code fromMission} the machine isn't migrated from: the replanning waits
      */
     public record Migration(
             String name,
@@ -163,10 +168,11 @@ public record ReplanningModel(List<Strategy> strategies, Map<String, Migration> 
             strategies.add(new Strategy(
                     strategy.group(1),
                     SysMLParserUtils.cleanValue(attributes.get("description")),
-                    SysMLParserUtils.cleanValue(attributes.get("triggerConstraint")),
+                    stringList(attributes.get("triggerConstraint")),
                     SysMLParserUtils.cleanValue(attributes.get("triggerState")),
                     stringList(attributes.get("stoppedMachines")),
-                    stringList(attributes.get("migrations"))));
+                    stringList(attributes.get("migrations")),
+                    SysMLParserUtils.cleanValue(attributes.get("recoveryStrategy"))));
         }
 
         Map<String, Migration> migrations = new LinkedHashMap<>();
@@ -175,7 +181,7 @@ public record ReplanningModel(List<Strategy> strategies, Map<String, Migration> 
             String name = migration.group(1);
             String body = blockBody(content, migration.end() - 1);
             Map<String, String> attributes = attributes(body);
-            String fromMission = require(attributes, "fromMission", name);
+            String fromMission = SysMLParserUtils.cleanValue(attributes.get("fromMission"));
             String toMission = require(attributes, "toMission", name);
 
             List<Rule> rules = new ArrayList<>();

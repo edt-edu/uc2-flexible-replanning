@@ -38,6 +38,7 @@ public class TokenLocationInferenceService {
             Map.entry("TokenAtSortingLineBlueOutput", "sl-blue"),
             Map.entry("TokenPickedUpByVGR1", "vgr1"),
             Map.entry("TokenDroppedOffAtConveyorBeltFeed", "cb-feed"),
+            Map.entry("TokenOnConveyorBelt", "cb-belt"),
             Map.entry("TokenAtConveyorBeltSwap", "cb-swap"),
             Map.entry("TokenPickedUpByVGR2", "vgr2"),
             Map.entry("TokenDroppedOffAtMPOInput", "mps-input"),

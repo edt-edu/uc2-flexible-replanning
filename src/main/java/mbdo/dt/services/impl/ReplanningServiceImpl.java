@@ -3,6 +3,7 @@ package mbdo.dt.services.impl;
 import jakarta.annotation.PostConstruct;
 import mbdo.dt.domain.AnomalyContext;
 import mbdo.dt.domain.DataRequest;
+import mbdo.dt.incident.ReplanningIncidentJournal;
 import mbdo.dt.incident.ReplanningIncidentRegistryService;
 import mbdo.dt.incident.ReplanningIncidentSseService;
 import mbdo.dt.replanning.ReplanningModel;
@@ -35,6 +36,7 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.Predicate;
 
 /**
  * Reacts to an anomaly with the replanning strategy it triggers, without the operator's approval:
@@ -46,7 +48,8 @@ import java.util.concurrent.Executors;
  *     <li>executes it: stops the failed machines (their mission, then the command they execute), then swaps each
  *     migrated machine's mission atomically. A machine that moved on meanwhile makes it plan again.</li>
  * </ol>
- * The plan is attached to the anomaly's incident at each step, for the operator to follow.
+ * The plan is attached to the anomaly's incident at each step, for the operator to follow. Once the operator repaired
+ * the failure, the strategy's recovery strategy brings the machines back to their nominal missions the same way.
  */
 @Service
 public class ReplanningServiceImpl implements ReplanningService {
@@ -61,6 +64,7 @@ public class ReplanningServiceImpl implements ReplanningService {
     private final ScadaClient scada;
     private final ReplanningIncidentRegistryService incidents;
     private final ReplanningIncidentSseService incidentEvents;
+    private final ReplanningIncidentJournal journal;
     private final RuntimeContext runtimeContext;
     private final String modelsPath;
     private final long retryDelayMs;
@@ -68,6 +72,8 @@ public class ReplanningServiceImpl implements ReplanningService {
     private final long commandTimeoutMs;
 
     private volatile ReplanningModel model = new ReplanningModel(List.of(), Map.of());
+    /** The strategy each anomaly triggered, for its recovery once the operator repaired the failure. */
+    private final Map<String, Strategy> anomalyStrategies = new ConcurrentHashMap<>();
     /** The state of the token of each anomaly, when it was detected: other tokens move on meanwhile. */
     private final Map<String, String> anomalyTokenStates = new ConcurrentHashMap<>();
     /** Talks to the SCADA away from the anomaly detection, which must not wait for it. One replanning at a time. */
@@ -81,6 +87,7 @@ public class ReplanningServiceImpl implements ReplanningService {
             ScadaClient scada,
             ReplanningIncidentRegistryService incidents,
             ReplanningIncidentSseService incidentEvents,
+            ReplanningIncidentJournal journal,
             RuntimeContext runtimeContext,
             @Value("${sysml.models.path:}") String modelsPath,
             @Value("${replanning.retry-delay-ms:1000}") long retryDelayMs,
@@ -90,6 +97,7 @@ public class ReplanningServiceImpl implements ReplanningService {
         this.scada = scada;
         this.incidents = incidents;
         this.incidentEvents = incidentEvents;
+        this.journal = journal;
         this.runtimeContext = runtimeContext;
         this.modelsPath = modelsPath;
         this.retryDelayMs = retryDelayMs;
@@ -145,10 +153,32 @@ public class ReplanningServiceImpl implements ReplanningService {
         if (anomalyResult.currentState() != null) {
             anomalyTokenStates.put(context.anomalyId(), anomalyResult.currentState());
         }
+        anomalyStrategies.put(context.anomalyId(), strategy);
         Map<String, Object> values = new HashMap<>(latestRuntimeValues == null ? Map.of() : latestRuntimeValues);
         values.put(TOKEN_LOCATION_STATE, anomalyResult.currentState());
         logger.info("Anomaly '{}' triggers replanning strategy {}.", context.anomalyId(), strategy.name());
-        worker.submit(() -> replan(strategy, context.anomalyId(), values));
+        String anomalyId = context.anomalyId();
+        worker.submit(() -> journal(anomalyId, ReplanningIncidentJournal.REPLANNING,
+                replan(strategy, anomalyId, values, this::publish)));
+    }
+
+    @Override
+    public void recover(String anomalyId) {
+        anomalyTokenStates.remove(anomalyId);
+        Strategy strategy = anomalyStrategies.remove(anomalyId);
+        if (strategy == null || strategy.recoveryStrategy() == null) {
+            return;
+        }
+        Strategy recovery = model.findStrategy(strategy.recoveryStrategy()).orElse(null);
+        if (recovery == null) {
+            logger.error("Replanning strategy {} names an undefined recovery strategy {}", strategy.name(),
+                    strategy.recoveryStrategy());
+            return;
+        }
+        logger.info("Anomaly '{}' repaired: recovery strategy {}.", anomalyId, recovery.name());
+        // after the replanning of the anomaly, if it still runs: it stops once its incident is closed
+        worker.submit(() -> journal(anomalyId, ReplanningIncidentJournal.RECOVERY,
+                replan(recovery, null, currentValues(null), plan -> publishRecovery(anomalyId, plan))));
     }
 
     @Override
@@ -158,8 +188,14 @@ public class ReplanningServiceImpl implements ReplanningService {
         return plan(strategy, model, scada.machines(), currentValues(null), null);
     }
 
-    /** Plans the strategy on {@code values}, then on the latest observations until it can be executed. */
-    private void replan(Strategy strategy, String anomalyId, Map<String, ?> values) {
+    /**
+     * Plans the strategy on {@code values}, then on the latest observations until it can be executed, and executes it.
+     *
+     * @param publisher shows each version of the plan; false: drop the replanning (its incident is closed)
+     * @return the plan as it ended (executed, failed, given up or dropped), null if interrupted
+     */
+    private ReplanningPlan replan(Strategy strategy, String anomalyId, Map<String, ?> values,
+                                  Predicate<ReplanningPlan> publisher) {
         long deadline = System.currentTimeMillis() + retryMaxMs;
         while (true) {
             ReplanningPlan plan;
@@ -169,14 +205,13 @@ public class ReplanningServiceImpl implements ReplanningService {
                 plan = new ReplanningPlan(strategy.name(), strategy.description(), anomalyId, Status.WAITING,
                         List.of(), List.of(e.getMessage()), null);
             }
-            if (!publish(plan)) {
+            if (!publisher.test(plan)) {
                 logger.info("Replanning {} dropped: its incident is no longer open", strategy.name());
-                return;
+                return plan;
             }
             if (plan.status() != Status.WAITING) {
                 try {
-                    execute(plan);
-                    return;
+                    return execute(plan, publisher);
                 } catch (ScadaConflictException e) {
                     logger.info("Replanning {}: a machine moved on ({}), planning again", strategy.name(),
                             e.getMessage());
@@ -184,14 +219,15 @@ public class ReplanningServiceImpl implements ReplanningService {
             }
             if (System.currentTimeMillis() + retryDelayMs > deadline) {
                 logger.warn("Replanning {} given up after {} ms: {}", strategy.name(), retryMaxMs, plan.problems());
-                publish(plan.with(Status.FAILED, plan.steps(), "Given up after " + retryMaxMs + " ms"));
-                return;
+                ReplanningPlan givenUp = plan.with(Status.FAILED, plan.steps(), "Given up after " + retryMaxMs + " ms");
+                publisher.test(givenUp);
+                return givenUp;
             }
             try {
                 Thread.sleep(retryDelayMs);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                return;
+                return null;
             }
             values = currentValues(anomalyId);
         }
@@ -250,6 +286,10 @@ public class ReplanningServiceImpl implements ReplanningService {
         if (migration.toMission().equals(machine.activeMission())) {
             return step.with(StepStatus.SKIPPED, "already runs " + migration.toMission());
         }
+        if (migration.fromMission() == null && machine.activeMission() == null) {
+            return new Step(Kind.MIGRATE, machine.name(), "start", null, null, migration.toMission(), null,
+                    StepStatus.PENDING, "start " + migration.toMission());
+        }
         if (!migration.fromMission().equals(machine.activeMission())) {
             return step.with(StepStatus.FAILED, machine.name() + " runs "
                     + (machine.activeMission() == null ? "no mission" : machine.activeMission())
@@ -288,9 +328,9 @@ public class ReplanningServiceImpl implements ReplanningService {
      *
      * @throws ScadaConflictException if a machine moved on since the plan was computed: plan again
      */
-    ReplanningPlan execute(ReplanningPlan plan) {
+    private ReplanningPlan execute(ReplanningPlan plan, Predicate<ReplanningPlan> publisher) {
         List<Step> steps = new ArrayList<>(plan.steps());
-        publish(plan.with(Status.EXECUTING, steps, null));
+        publisher.test(plan.with(Status.EXECUTING, steps, null));
         for (int i = 0; i < steps.size(); i++) {
             Step step = steps.get(i);
             if (step.status() != StepStatus.PENDING) {
@@ -310,15 +350,15 @@ public class ReplanningServiceImpl implements ReplanningService {
                 logger.warn("Replanning {} failed on {}: {}", plan.strategy(), step.machine(), e.getMessage());
                 ReplanningPlan failed = plan.with(Status.FAILED, steps,
                         "Failed on " + step.machine() + ": " + e.getMessage());
-                publish(failed);
+                publisher.test(failed);
                 return failed;
             }
             logger.info("Replanning {}: {} {} ({})", plan.strategy(), step.kind(), step.machine(),
                     steps.get(i).detail());
-            publish(plan.with(Status.EXECUTING, steps, null));
+            publisher.test(plan.with(Status.EXECUTING, steps, null));
         }
         ReplanningPlan executed = plan.with(Status.EXECUTED, steps, "Replanning " + plan.strategy() + " executed");
-        publish(executed);
+        publisher.test(executed);
         return executed;
     }
 
@@ -333,9 +373,25 @@ public class ReplanningServiceImpl implements ReplanningService {
     }
 
     private String swap(Step step) {
+        if (step.fromMission() == null) {
+            scada.swapMission(step.machine(), step.toMission(), null, "", null);
+            return "started " + step.toMission();
+        }
         scada.swapMission(step.machine(), step.toMission(), step.toState(), step.fromMission(), step.fromState());
         return "from " + step.fromMission() + "::" + step.fromState() + " to " + step.toMission() + "::"
                 + step.toState() + " (" + step.rule() + ")";
+    }
+
+    /** Shows the recovery in the (resolved) incident of the repaired anomaly. */
+    private boolean publishRecovery(String anomalyId, ReplanningPlan plan) {
+        incidents.attachRecoveryPlan(anomalyId, plan).ifPresent(incidentEvents::broadcastUpdated);
+        return true;
+    }
+
+    private void journal(String anomalyId, String kind, ReplanningPlan plan) {
+        if (plan != null) {
+            journal.recordReplanning(anomalyId, kind, plan);
+        }
     }
 
     /** Attaches the plan to its anomaly's incident: false if that incident is no longer open. */

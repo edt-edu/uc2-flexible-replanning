@@ -18,11 +18,15 @@ package Replanning {
        The first rule (in the order of the model) leaving the machine's state whose guard holds is applied. If no rule
        leaves that state, the alternative mission starts in the state of the same name. A machine in one of its
        waitStates, or whose rules leaving its state all have a false guard, isn't migrated: the replanning waits for
-       it to move on, and executes once every machine can be migrated. */
+       it to move on, and executes once every machine can be migrated.
+
+       When the operator repairs the failure (resolves the incident), the strategy's recovery strategy is executed the
+       same way: it migrates the machines back to their nominal missions and restarts the stopped ones. */
 
     state def MissionMigration {
         attribute machine : String;
-        attribute fromMission : String;
+        /* none: the machine runs no mission (it was stopped), toMission starts from its initial state */
+        attribute fromMission : String[0..1];
         attribute toMission : String;
         /* the states of fromMission the machine isn't migrated from (e.g. it is notifying a zone the alternative
            mission already accounts for) */
@@ -31,13 +35,15 @@ package Replanning {
 
     part def ReplanningStrategy {
         attribute description : String;
-        /* the constraint whose violation triggers the strategy (e.g. a StateDurationLimit of TokenLocation) */
-        attribute triggerConstraint : String;
+        /* the constraints whose violation triggers the strategy (e.g. StateDurationLimits of TokenLocation) */
+        attribute triggerConstraint : String[*];
         /* or the TokenLocation state in which the anomaly was detected */
         attribute triggerState : String;
         /* the machines whose missions are stopped (the failed ones) */
         attribute stoppedMachines : String[*];
         /* the MissionMigration applied, in this order */
         attribute migrations : String[*];
+        /* the ReplanningStrategy executed once the operator repaired the failure: back to the nominal missions */
+        attribute recoveryStrategy : String[0..1];
     }
 }

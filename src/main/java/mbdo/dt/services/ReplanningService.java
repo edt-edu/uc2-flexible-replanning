@@ -27,6 +27,12 @@ public interface ReplanningService {
     );
 
     /**
+     * The operator repaired the failure of the anomaly {@code anomalyId}: executes the recovery strategy of the
+     * strategy it triggered, if any (back to the nominal missions), without the operator's approval. Returns at once.
+     */
+    void recover(String anomalyId);
+
+    /**
      * Plans a strategy on the machines' current states, without executing it (dry run).
      *
      * @throws IllegalArgumentException if no such strategy exists

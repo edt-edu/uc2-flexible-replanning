@@ -1,6 +1,7 @@
 package mbdo.dt.services.impl;
 
 import mbdo.dt.domain.AnomalyContext;
+import mbdo.dt.incident.ReplanningIncidentJournal;
 import mbdo.dt.incident.ReplanningIncidentRegistryService;
 import mbdo.dt.incident.ReplanningIncidentResponse;
 import mbdo.dt.incident.ReplanningIncidentSseService;
@@ -42,7 +43,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.timeout;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /** The conveyor belt failure replanning: planned on the states the SCADA reports, executed on a fake SCADA. */
@@ -115,6 +119,7 @@ class ReplanningServiceImplTest {
     private final ReplanningModel.Strategy cbFailure = model.findStrategy("cbFailure").orElseThrow();
     private final Map<String, Object> values = new HashMap<>();
     private final List<ReplanningPlan> published = new ArrayList<>();
+    private final ReplanningIncidentJournal journal = mock(ReplanningIncidentJournal.class);
     private FakeScada scada;
     private ReplanningServiceImpl service;
 
@@ -122,7 +127,7 @@ class ReplanningServiceImplTest {
     void setUp() {
         scada = new FakeScada();
         scada.machines.put(CB, cb("ConveyorBeltNominalMission", "MovingToSensor"));
-        scada.machines.put(ZONE_CB, zoneCB("ZoneMissionCBNominal", "IdleFree"));
+        scada.machines.put(ZONE_CB, zoneCB("ZoneMissionCBNominal", "TokenOnFeed"));
         scada.machines.put(VGR1, vgr1("VacuumGripper1NominalMission", "Idle"));
         scada.machines.put(VGR2, vgr2("VacuumGripper2NominalMission", "Idle"));
         tokenStuckOnTheFeed();
@@ -136,7 +141,8 @@ class ReplanningServiceImplTest {
         });
         RuntimeContext runtimeContext = mock(RuntimeContext.class);
         when(runtimeContext.snapshot()).thenAnswer(call -> new HashMap<>(values));
-        service = new ReplanningServiceImpl(scada, incidents, mock(ReplanningIncidentSseService.class), runtimeContext,
+        service = new ReplanningServiceImpl(scada, incidents, mock(ReplanningIncidentSseService.class), journal,
+                runtimeContext,
                 "classpath*:models/**/*.sysml", 20, 2000, 1000);
         service.loadModel();
     }
@@ -162,7 +168,7 @@ class ReplanningServiceImplTest {
                 List.of(false, true), "TokenOnFeed",
                 List.of(true, false), "TokenOnSwap",
                 List.of(false, false), "SwapThenFeed");
-        for (String state : List.of("IdleFree", "IdleBusy", "IdleBusyRequested")) {
+        for (String state : List.of("Empty", "TokenOnFeed", "TokenOnSwap", "SwapThenFeed")) {
             scada.machines.put(ZONE_CB, zoneCB("ZoneMissionCBNominal", state));
             expected.forEach((feedAndSwap, deadCBState) -> {
                 values.put("cb.conveyorSensFeed", feedAndSwap.get(0));
@@ -200,6 +206,26 @@ class ReplanningServiceImplTest {
     }
 
     @Test
+    void aGripperOverTheBeltMakesTheZoneWaitAndVgr1WaitingInStandbyAsksTheDeadZoneAtOnce() {
+        scada.machines.put(ZONE_CB, zoneCB("ZoneMissionCBNominal", "VGR2PickingLastToken"));
+        scada.machines.put(VGR1, vgr1("VacuumGripper1NominalMission", "WaitForFreeCBSlot"));
+        scada.machines.put(VGR2, vgr2("VacuumGripper2NominalMission", "PickCBswapCMD"));
+
+        ReplanningPlan plan = plan();
+
+        assertEquals(Status.WAITING, plan.status());
+        assertEquals(2, plan.problems().size(), plan.problems().toString());
+        assertTrue(plan.problems().get(0).startsWith("ZoneCB is in VGR2PickingLastToken"), plan.problems().toString());
+
+        scada.machines.put(ZONE_CB, zoneCB("ZoneMissionCBNominal", "TokenOnFeed"));
+        scada.machines.put(VGR2, vgr2("VacuumGripper2NominalMission", "WaitForCBZoneAcquisition"));
+        plan = plan();
+        assertEquals(Status.PLANNED, plan.status(), plan.problems().toString());
+        assertEquals("AskCBSlotInStandby", plan.steps().get(2).toState());
+        assertEquals("CheckCB", plan.steps().get(3).toState());
+    }
+
+    @Test
     void vgr2OnItsWayToTheMpsGoesOnWithoutTheSafePosition() {
         scada.machines.put(VGR2, vgr2("VacuumGripper2NominalMission", "StandbyBeforeMPSCMD"));
 
@@ -214,7 +240,7 @@ class ReplanningServiceImplTest {
         ReplanningPlan plan = plan();
 
         assertEquals(Status.WAITING, plan.status());
-        assertTrue(plan.problems().get(0).contains("has no state PlaceConveyorBeltFeed"), plan.problems().toString());
+        assertTrue(plan.problems().get(0).contains("is in PlaceConveyorBeltFeed: waiting"), plan.problems().toString());
         assertTrue(plan.problems().get(1).contains("waiting for it to leave"), plan.problems().toString());
     }
 
@@ -248,12 +274,21 @@ class ReplanningServiceImplTest {
         ReplanningPlan executed = replanned();
 
         assertEquals(Status.EXECUTED, executed.status(), executed.message());
+        verify(journal, timeout(2000)).recordReplanning(ANOMALY, ReplanningIncidentJournal.REPLANNING, executed);
         assertEquals(List.of(
                 "stop " + CB,
                 "command " + CB + " stop",
                 "swap " + ZONE_CB + " ZoneMissionDeadCB::TokenOnFeed",
                 "swap " + VGR1 + " VacuumGripper1CBFailureMission::AskSortingLine",
                 "swap " + VGR2 + " VacuumGripper2CBFailureMission::CheckCB"), scada.requests);
+    }
+
+    @Test
+    void aBeltThatDoesNotStartTriggersTheSameReplanning() {
+        ReplanningPlan executed = replanned("ConveyorBeltFeedDepartureLimit");
+
+        assertEquals(Status.EXECUTED, executed.status(), executed.message());
+        assertEquals("cbFailure", executed.strategy());
     }
 
     @Test
@@ -296,18 +331,82 @@ class ReplanningServiceImplTest {
         assertTrue(scada.requests.stream().noneMatch(r -> r.startsWith("swap ")), "no gripper works over the belt");
     }
 
+    // ---- recovery ----
+
+    @Test
+    void onceTheOperatorRepairedTheBeltTheMachinesGoBackToTheirNominalMissionsAndTheBeltRestarts() {
+        assertEquals(Status.EXECUTED, replanned().status());
+        synchronized (scada) {
+            scada.machines.put(ZONE_CB, zoneCB("ZoneMissionDeadCB", "TokenOnSwap"));
+            scada.machines.put(VGR1, vgr1("VacuumGripper1CBFailureMission", "Idle"));
+            scada.machines.put(VGR2, vgr2("VacuumGripper2CBFailureMission", "Idle"));
+            scada.requests.clear();
+        }
+
+        service.recover(ANOMALY);
+
+        List<String> expected = List.of(
+                "swap " + ZONE_CB + " ZoneMissionCBNominal::CheckBelt",
+                "swap " + VGR1 + " VacuumGripper1NominalMission::Idle",
+                "swap " + VGR2 + " VacuumGripper2NominalMission::CheckSwap",
+                "swap " + CB + " ConveyorBeltNominalMission::null");
+        long deadline = System.currentTimeMillis() + 3000;
+        while (System.currentTimeMillis() < deadline && scada.requests.size() < expected.size()) {
+            sleep(10);
+        }
+        assertEquals(expected, scada.requests);
+        verify(journal, timeout(2000)).recordReplanning(eq(ANOMALY), eq(ReplanningIncidentJournal.RECOVERY),
+                argThat(plan -> plan.status() == Status.EXECUTED));
+    }
+
+    @Test
+    void theRecoveryWaitsForTheGrippersToLeaveTheBeltButNotForTheTokensOnIt() {
+        ReplanningModel.Strategy cbRepaired = model.findStrategy(cbFailure.recoveryStrategy()).orElseThrow();
+        scada.machines.put(CB, cb(null, null));
+        scada.machines.put(ZONE_CB, zoneCB("ZoneMissionDeadCB", "VGR1PlacingOnSwapAfterFeed"));
+        scada.machines.put(VGR1, vgr1("VacuumGripper1CBFailureMission", "PlaceConveyorBeltCMD"));
+        scada.machines.put(VGR2, vgr2("VacuumGripper2CBFailureMission", "Idle"));
+
+        ReplanningPlan plan = ReplanningServiceImpl.plan(cbRepaired, model, scada.machines(), values, null);
+
+        assertEquals(Status.WAITING, plan.status());
+        assertEquals(2, plan.problems().size(), plan.problems().toString());
+
+        // VGR1 placed and went back: tokens left on the feed and the swap, the nominal zone reads them (CheckBelt)
+        scada.machines.put(ZONE_CB, zoneCB("ZoneMissionDeadCB", "SwapThenFeed"));
+        scada.machines.put(VGR1, vgr1("VacuumGripper1CBFailureMission", "WaitForFreeCBSlot"));
+        plan = ReplanningServiceImpl.plan(cbRepaired, model, scada.machines(), values, null);
+        assertEquals(Status.PLANNED, plan.status(), plan.problems().toString());
+        assertEquals("CheckBelt", plan.steps().get(0).toState());
+        assertEquals("AskCBSlotInStandby", plan.steps().get(1).toState());
+        assertEquals("CheckSwap", plan.steps().get(2).toState());
+    }
+
+    @Test
+    void aRepairedAnomalyWithoutReplanningDoesNothing() {
+        service.recover("unknown");
+
+        sleep(100);
+        assertTrue(scada.requests.isEmpty(), scada.requests.toString());
+    }
+
     private ReplanningPlan plan() {
         return ReplanningServiceImpl.plan(cbFailure, model, scada.machines(), values, null);
     }
 
-    /** Raises the feed departure anomaly, and waits for its replanning to end. */
+    /** Raises the swap arrival anomaly, and waits for its replanning to end. */
     private ReplanningPlan replanned() {
+        return replanned("ConveyorBeltSwapArrivalLimit");
+    }
+
+    /** Raises the anomaly of the violated {@code constraint}, and waits for its replanning to end. */
+    private ReplanningPlan replanned(String constraint) {
         AnomalyContext context = new AnomalyContext(ANOMALY, Instant.now(), "TokenLocation",
                 "TokenDroppedOffAtConveyorBeltFeed", "cb", "TokenDroppedOffAtConveyorBeltFeed",
                 "TokenDroppedOffAtConveyorBeltFeed", "Token #1: feed departure limit");
         service.handleAnomaly(null, new AnomalyEvaluationResult(EvaluationStatus.ANOMALY_DETECTED, "TokenLocation",
                 "TokenLocation", "TokenDroppedOffAtConveyorBeltFeed", "TokenDroppedOffAtConveyorBeltFeed",
-                "ConveyorBeltFeedDepartureLimit", "feed departure limit", context), new HashMap<>(values));
+                constraint, constraint, context), new HashMap<>(values));
         long deadline = System.currentTimeMillis() + 3000;
         while (System.currentTimeMillis() < deadline) {
             synchronized (published) {

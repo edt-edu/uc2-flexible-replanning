@@ -3,6 +3,7 @@ package mbdo.dt.incident;
 import mbdo.dt.data.DigitalShadow;
 import mbdo.dt.domain.AnomalyContext;
 import mbdo.dt.services.AnomalyDetection;
+import mbdo.dt.services.ReplanningService;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -25,17 +26,20 @@ public class ReplanningIncidentController {
     private final ReplanningIncidentSseService sseService;
     private final DigitalShadow digitalShadow;
     private final AnomalyDetection anomalyDetection;
+    private final ReplanningService replanningService;
 
     public ReplanningIncidentController(
             ReplanningIncidentRegistryService registryService,
             ReplanningIncidentSseService sseService,
             DigitalShadow digitalShadow,
-            AnomalyDetection anomalyDetection
+            AnomalyDetection anomalyDetection,
+            ReplanningService replanningService
     ) {
         this.registryService = registryService;
         this.sseService = sseService;
         this.digitalShadow = digitalShadow;
         this.anomalyDetection = anomalyDetection;
+        this.replanningService = replanningService;
     }
 
     @GetMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -61,16 +65,22 @@ public class ReplanningIncidentController {
             @RequestBody ResolveIncidentRequest request
     ) {
         String comment = request == null ? null : request.getComment();
+        // the same time for the record and the incident: the recovery is added to the record at that time
+        Instant resolvedAt = Instant.now();
 
         registryService.getOriginatingContext(id)
-                .ifPresent(context -> digitalShadow.recordRecovery(context, comment, Instant.now()));
+                .ifPresent(context -> digitalShadow.recordRecovery(context, comment, resolvedAt));
 
         Optional<AnomalyContext> context = registryService.getOriginatingContext(id);
 
-        return registryService.resolveCurrentIncident(id, comment)
+        return registryService.resolveCurrentIncident(id, comment, resolvedAt)
                 .map(resolved -> {
-                    // the operator dealt with the anomaly: its token is no longer followed, the others are
-                    context.ifPresent(c -> anomalyDetection.releaseAnomaly(c.anomalyId()));
+                    // the operator dealt with the anomaly: its token is no longer followed, the others are, and the
+                    // machines go back to their nominal missions
+                    context.ifPresent(c -> {
+                        anomalyDetection.releaseAnomaly(c.anomalyId());
+                        replanningService.recover(c.anomalyId());
+                    });
                     sseService.broadcastResolved(resolved);
                     return ResponseEntity.ok(resolved);
                 })
