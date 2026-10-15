@@ -23,10 +23,15 @@ export class ReplanningIncidentStore {
             return;
         }
 
-        const { opened, resolved } = this.replanningIncidentService.connectToIncidentStream();
+        const { opened, updated, resolved } = this.replanningIncidentService.connectToIncidentStream();
 
         this.subscriptions.push(
             opened.subscribe(incident => this.currentIncidentState.set(incident)),
+            updated.subscribe(incident => {
+                if (this.currentIncidentState()?.id === incident.id) {
+                    this.currentIncidentState.set(incident);
+                }
+            }),
             resolved.subscribe(incident => {
                 this.currentIncidentState.set(null);
                 this.historyState.update(history => [incident, ...history]);

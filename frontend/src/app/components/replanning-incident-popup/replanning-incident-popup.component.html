@@ -1,10 +1,52 @@
+@if (collapsed) {
+<button type="button" class="incident-pill" (click)="toggleCollapsed()" aria-expanded="false"
+    [attr.aria-label]="'Live replanning incident: ' + incident.message + '. Show details'" [title]="incident.message">
+    <span aria-hidden="true">⚠</span>
+</button>
+} @else {
 <aside class="replanning-popup" role="dialog" aria-label="Live replanning incident">
-    <div class="popup-header">
-        <p class="alert-badge">Live Replanning Incident</p>
-        <h3 class="popup-title">{{ incident.message }}</h3>
-    </div>
+    <button type="button" class="popup-header" (click)="toggleCollapsed()" aria-expanded="true"
+        aria-controls="replanningPopupBody">
+        <span class="header-row">
+            <span class="alert-badge">Live Replanning Incident</span>
+            <span class="collapse-icon" aria-hidden="true">▾</span>
+        </span>
+        <span class="popup-title">{{ incident.message }}</span>
+    </button>
 
-    <div class="popup-body">
+    <div class="popup-body" id="replanningPopupBody">
+        @if (incident.replanningPlan; as plan) {
+            <section class="plan" aria-label="Replanning">
+                <div class="plan-header">
+                    <h4>Replanning: {{ plan.description || plan.strategy }}</h4>
+                    <span class="plan-status" [attr.data-status]="plan.status">{{ plan.status }}</span>
+                </div>
+
+                <ol class="plan-steps">
+                    @for (step of plan.steps; track step.machine) {
+                        <li class="plan-step" [attr.data-status]="step.status">
+                            <span class="step-machine">{{ step.machine }}</span>
+                            @if (step.kind === 'STOP_MISSION') {
+                                <span class="step-what">stop {{ step.fromMission ?? 'mission' }}</span>
+                            } @else {
+                                <span class="step-what">
+                                    {{ step.fromMission }}::{{ step.fromState }} → {{ step.toMission }}::{{ step.toState }}
+                                </span>
+                            }
+                            <span class="step-detail">{{ step.status }} · {{ step.detail }}</span>
+                        </li>
+                    }
+                </ol>
+
+                @for (problem of plan.problems; track problem) {
+                    <p class="plan-problem">{{ problem }}</p>
+                }
+                @if (plan.message) {
+                    <p class="plan-message">{{ plan.message }}</p>
+                }
+            </section>
+        }
+
         <p>Your action is required to correct the issue and resume normal operations.</p>
 
         <textarea id="replanningComment" [(ngModel)]="comment"
@@ -15,3 +57,4 @@
         </button>
     </div>
 </aside>
+}

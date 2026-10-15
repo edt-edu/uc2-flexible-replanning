@@ -12,13 +12,18 @@ export class ReplanningIncidentService {
     private eventSource: EventSource | null = null;
     private readonly incidentOpenedSubject = new Subject<ReplanningIncident>();
     private readonly incidentResolvedSubject = new Subject<ReplanningIncident>();
+    private readonly incidentUpdatedSubject = new Subject<ReplanningIncident>();
 
     constructor(
         private readonly http: HttpClient,
         private readonly ngZone: NgZone
     ) { }
 
-    connectToIncidentStream(): { opened: Observable<ReplanningIncident>; resolved: Observable<ReplanningIncident> } {
+    connectToIncidentStream(): {
+        opened: Observable<ReplanningIncident>;
+        updated: Observable<ReplanningIncident>;
+        resolved: Observable<ReplanningIncident>;
+    } {
         if (this.eventSource) {
             this.eventSource.close();
         }
@@ -32,6 +37,17 @@ export class ReplanningIncidentService {
                     this.incidentOpenedSubject.next(JSON.parse(event.data));
                 } catch (error) {
                     console.error('[ReplanningIncidentService] Error parsing incident-opened event:', error);
+                }
+            });
+        });
+
+        // the replanning plan of the open incident was computed, or progressed
+        this.eventSource.addEventListener('incident-updated', (event: MessageEvent) => {
+            this.ngZone.run(() => {
+                try {
+                    this.incidentUpdatedSubject.next(JSON.parse(event.data));
+                } catch (error) {
+                    console.error('[ReplanningIncidentService] Error parsing incident-updated event:', error);
                 }
             });
         });
@@ -59,6 +75,7 @@ export class ReplanningIncidentService {
 
         return {
             opened: this.incidentOpenedSubject.asObservable(),
+            updated: this.incidentUpdatedSubject.asObservable(),
             resolved: this.incidentResolvedSubject.asObservable()
         };
     }

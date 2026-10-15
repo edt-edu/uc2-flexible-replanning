@@ -34,7 +34,7 @@ export class ConveyorBeltModel extends GenericMachine {
 
     override render(machineEl: SVGGElement): void {
         super.render(machineEl);
-        this.toggleElementClass(machineEl, `beltSurface${this.id}`, 'movingPartNotOperational', !this.isOperational);
+        this.toggleElementClass(machineEl, `beltSurface${this.id}`, 'movingPartNotOperational', this.isStopped);
         this.toggleElementClass(machineEl, `sensorFeed${this.id}`, 'active', this.sensorFeed);
         this.toggleElementClass(machineEl, `sensorSwap${this.id}`, 'active', this.sensorSwap);
         this.renderBeltAnimation(machineEl);
@@ -49,7 +49,7 @@ export class ConveyorBeltModel extends GenericMachine {
 
         const isBackward = this.direction === 'backward' || this.direction === 'reverse';
         const animationId = isBackward ? `beltBackward${this.id}` : `beltForward${this.id}`;
-        const target = this.isOperational && this.isExecuting
+        const target = !this.isStopped && this.isExecuting
             ? svg.querySelector<SVGAnimationElement>(`#${animationId}`)
             : null;
 

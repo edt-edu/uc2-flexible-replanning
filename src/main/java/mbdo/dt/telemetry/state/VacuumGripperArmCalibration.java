@@ -12,7 +12,9 @@ import java.util.function.ToDoubleFunction;
  *
  * <p>Each anchor is a named position of the PLC (rotation and horizontal encoder counts) and the arm angle / length
  * that put the end effector on the SVG element of that position. Between anchors the angle is interpolated linearly on
- * the rotation counts; outside them it continues with the average slope. The drawing is not to scale, so the arm length
+ * the rotation counts. Below the first anchor it goes linearly to 0 degrees at 0 counts (the rotation's reference
+ * position), above the last one it continues with the average slope. The rotation counts are clamped to
+ * [0, {@link #MAX_ROTATION_COUNTS}], the range of the rotation axis. The drawing is not to scale, so the arm length
  * is not interpolated on the horizontal counts alone: at a rotation, the anchor length (interpolated on the rotation)
  * is reached at the anchor's horizontal counts, so the arm only grows as it extends and is exact on each anchor.
  *
@@ -25,6 +27,9 @@ final class VacuumGripperArmCalibration {
 
     static final double MIN_ARM_LENGTH = 165d;
     static final double MAX_ARM_LENGTH = 315d;
+
+    /** The rotation axis goes from 0 (its reference position, drawn at 0 degrees) to this many encoder counts. */
+    static final double MAX_ROTATION_COUNTS = 2990d;
 
     /**
      * A named position and how the arm is drawn there.
@@ -80,10 +85,11 @@ final class VacuumGripperArmCalibration {
 
     /** Arm rotation, in degrees, at these rotation encoder counts. */
     double angle(double rotationCounts) {
+        rotationCounts = Math.max(0d, Math.min(MAX_ROTATION_COUNTS, rotationCounts));
         Anchor first = anchors.get(0);
         Anchor last = anchors.get(anchors.size() - 1);
         if (rotationCounts <= first.rotationCounts()) {
-            return first.angle() + (rotationCounts - first.rotationCounts()) * averageSlope;
+            return first.angle() * rotationCounts / first.rotationCounts();
         }
         if (rotationCounts >= last.rotationCounts()) {
             return last.angle() + (rotationCounts - last.rotationCounts()) * averageSlope;

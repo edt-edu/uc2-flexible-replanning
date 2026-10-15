@@ -12,6 +12,8 @@ export interface IMachine {
     position: { x: number; y: number };
     rotation: number;
     isOperational: boolean;
+    /** When the digital twin found the machine failed (a replanning incident stops it), else null. */
+    failedSince: Date | null;
     lastUpdateTimestamp: Date | null;
 
     update(data: MachineTelemetryData): void;

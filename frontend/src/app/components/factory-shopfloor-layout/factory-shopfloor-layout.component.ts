@@ -1,10 +1,12 @@
-import { AfterViewInit, Component, ElementRef, OnDestroy, ViewChild } from '@angular/core';
+import { AfterViewInit, Component, ElementRef, OnDestroy, ViewChild, effect } from '@angular/core';
 import { Subscription } from 'rxjs';
 
 import { ShopfloorMachineUpdate } from '../../models/machine-update.model';
+import { ReplanningIncident } from '../../models/replanning-incident.model';
 import { VacuumGripperModel } from '../../models/shopfloor/machines/models/VacummGripper.model';
-import { TokenLocation } from '../../models/token-location.model';
+import { TokenLocation, TokenOnLine } from '../../models/token-location.model';
 import { MachineTelemetryStore } from '../../stores/machine-telemetry.store';
+import { ReplanningIncidentStore } from '../../stores/replanning-incident.store';
 
 @Component({
     selector: 'app-factory-shopfloor-layout',
@@ -22,7 +24,7 @@ import { MachineTelemetryStore } from '../../stores/machine-telemetry.store';
                     <ul class="space-y-3 text-sm text-slate-700">
                         <li class="flex items-center gap-3">
                             <span class="h-4 w-4 rounded border border-red-200" style="background:#dc2626"></span>
-                            <span>Not operational</span>
+                            <span>Not operational, or failed (stopped by a replanning)</span>
                         </li>
                         <li class="flex items-center gap-3">
                             <span class="h-4 w-4 rounded border border-amber-200" style="background:#fef3c7"></span>
@@ -70,10 +72,18 @@ import { MachineTelemetryStore } from '../../stores/machine-telemetry.store';
                             <span class="h-4 w-4 rounded-full border-2 border-dashed border-red-600"></span>
                             <span>Last position before an anomaly</span>
                         </li>
+                        <li class="flex items-center gap-3">
+                            <span class="h-4 w-4 rounded-full border-2 border-dashed border-slate-400 opacity-60"></span>
+                            <span>Trace: last known position, the sensor no longer sees the token (until the incident is resolved)</span>
+                        </li>
                     </ul>
-                    <p class="mt-3 text-xs text-slate-500" data-testid="token-state">
-                        {{ tokenDescription }}
-                    </p>
+                    <ul class="mt-3 space-y-1 text-xs text-slate-500" data-testid="token-state">
+                        @for (line of tokenDescriptions; track line) {
+                            <li>{{ line }}</li>
+                        } @empty {
+                            <li>No token</li>
+                        }
+                    </ul>
                 </div>
             </aside>
 
@@ -88,7 +98,7 @@ export class FactoryShopfloorLayoutComponent implements AfterViewInit, OnDestroy
     private subscription: Subscription | null = null;
     private tokenSubscription: Subscription | null = null;
     private lastToken: TokenLocation | null = null;
-    tokenDescription = 'No token';
+    tokenDescriptions: string[] = [];
 
     /** Inferred token location -> SVG element the token is drawn on. */
     private static readonly TOKEN_ANCHOR_BY_LOCATION: Record<string, string> = {
@@ -108,7 +118,7 @@ export class FactoryShopfloorLayoutComponent implements AfterViewInit, OnDestroy
         RED: '#dc2626',
         BLUE: '#2563eb'
     };
-    private static readonly TOKEN_ELEMENT_ID = 'inferredToken';
+    private static readonly TOKEN_ELEMENT_CLASS = 'inferred-token';
     private static readonly MACHINE_NAME_BY_ID: Record<string, string> = {
         CBSystemModel: 'Conveyor Belt',
         HBWSystemModel: 'High Bay Warehouse',
@@ -118,10 +128,26 @@ export class FactoryShopfloorLayoutComponent implements AfterViewInit, OnDestroy
         VGRSystemModel_02: 'Vacuum Gripper Robot 02'
     };
 
+    /** SCADA machine (as the replanning plans name it) -> SVG group of the machine. */
+    private static readonly SVG_ID_BY_SCADA_MACHINE: Record<string, string> = {
+        'REN_MISSION_01/CB01': 'CBSystemModel',
+        'REN_MISSION_01/SL01': 'SLSystemModel',
+        'REN_MISSION_01/MPS01': 'MPSystemModel',
+        'REN_MISSION_01/VGR01': 'VGRSystemModel_01',
+        'REN_MISSION_01/VGR02': 'VGRSystemModel_02'
+    };
+
     // Cache machine elements for fast updates
     private readonly machineCache = new Map<string, SVGGElement>();
+    /** The machines the open replanning incident found failed, and since when. */
+    private failedMachines = new Map<string, Date>();
 
-    constructor(private readonly telemetryStore: MachineTelemetryStore) { }
+    constructor(
+        private readonly telemetryStore: MachineTelemetryStore,
+        replanningIncidentStore: ReplanningIncidentStore
+    ) {
+        effect(() => this.renderFailures(replanningIncidentStore.currentIncident()));
+    }
 
     ngAfterViewInit(): void {
         // Load SVG into container
@@ -181,13 +207,38 @@ export class FactoryShopfloorLayoutComponent implements AfterViewInit, OnDestroy
             if (machine instanceof VacuumGripperModel) {
                 // the arm is animated between updates: a token held by the gripper follows it on every frame
                 machine.onArmFrame = () => {
-                    if (this.lastToken?.location?.startsWith('vgr')) {
+                    if (this.lastToken?.tokens.some(token => token.location?.startsWith('vgr'))) {
                         this.renderToken();
                     }
                 };
             }
+            machine.failedSince = this.failedMachines.get(machineId) ?? null;
             machine.render(machineEl);
         });
+    }
+
+    /**
+     * Shows as failed the machines the open incident's replanning stops (e.g. the conveyor belt that doesn't move the
+     * token from its feed), until the incident is resolved.
+     */
+    private renderFailures(incident: ReplanningIncident | null): void {
+        this.failedMachines = FactoryShopfloorLayoutComponent.failedMachinesOf(incident);
+        this.renderInitialMachineState();
+    }
+
+    private static failedMachinesOf(incident: ReplanningIncident | null): Map<string, Date> {
+        const failed = new Map<string, Date>();
+        if (!incident || incident.status !== 'OPEN') {
+            return failed;
+        }
+        const since = new Date(incident.startTime);
+        for (const step of incident.replanningPlan?.steps ?? []) {
+            const svgId = FactoryShopfloorLayoutComponent.SVG_ID_BY_SCADA_MACHINE[step.machine];
+            if (step.kind === 'STOP_MISSION' && svgId) {
+                failed.set(svgId, since);
+            }
+        }
+        return failed;
     }
 
     private attachMachineTooltips(svg: SVGSVGElement): void {
@@ -214,19 +265,34 @@ export class FactoryShopfloorLayoutComponent implements AfterViewInit, OnDestroy
         return Object.hasOwn(FactoryShopfloorLayoutComponent.MACHINE_NAME_BY_ID, groupId);
     }
 
-    /** Draws the inferred token on the SVG element of its location (none when there is no token). */
+    /** Draws each inferred token on the SVG element of its location, with its number. */
     private renderToken(): void {
-        const token = this.lastToken;
-        this.tokenDescription = !token || !token.location
-            ? `No token${token?.state ? ` (${token.state})` : ''}`
-            : `${token.color ?? 'Unknown color'} token at ${token.location} (${token.state})${token.anomaly ? ' - anomaly' : ''}`;
+        const tokens = this.lastToken?.tokens ?? [];
+        this.tokenDescriptions = tokens.map(token => FactoryShopfloorLayoutComponent.describeToken(token));
 
         const svg = this.svgContainer.nativeElement.querySelector<SVGSVGElement>('svg');
         if (!svg) return;
-        svg.querySelector(`#${FactoryShopfloorLayoutComponent.TOKEN_ELEMENT_ID}`)?.remove();
-        if (!token?.location) return;
+        svg.querySelectorAll(`.${FactoryShopfloorLayoutComponent.TOKEN_ELEMENT_CLASS}`).forEach(element => element.remove());
 
-        const anchorId = FactoryShopfloorLayoutComponent.TOKEN_ANCHOR_BY_LOCATION[token.location];
+        // tokens drawn on the same element (e.g. while one leaves and the next arrives) are spread apart
+        const drawnAt = new Map<string, number>();
+        for (const token of tokens) {
+            if (!token.location) continue;
+            const index = drawnAt.get(token.location) ?? 0;
+            drawnAt.set(token.location, index + 1);
+            this.drawToken(svg, token, index);
+        }
+    }
+
+    private static describeToken(token: TokenOnLine): string {
+        const where = !token.location ? 'off the line'
+            : token.present ? `at ${token.location}` : `last seen at ${token.location}`;
+        return `#${token.number} ${token.color ?? 'Unknown color'} token ${where} (${token.state})`
+            + (token.anomaly ? ' - anomaly' : '');
+    }
+
+    private drawToken(svg: SVGSVGElement, token: TokenOnLine, index: number): void {
+        const anchorId = FactoryShopfloorLayoutComponent.TOKEN_ANCHOR_BY_LOCATION[token.location!];
         const anchor = anchorId ? svg.querySelector<SVGGraphicsElement>(`#${anchorId}`) : null;
         if (!anchor) {
             console.warn(`[Shopfloor] No SVG element for token location '${token.location}'`);
@@ -235,28 +301,55 @@ export class FactoryShopfloorLayoutComponent implements AfterViewInit, OnDestroy
 
         // drawn next to the anchor, in the same coordinate system, so it follows the machine's transforms
         const box = anchor.getBBox();
+        const cx = box.x + box.width / 2 + index * 26;
+        const cy = box.y + box.height / 2;
         const svgNs = 'http://www.w3.org/2000/svg';
+        const group = document.createElementNS(svgNs, 'g');
+        group.setAttribute('class', FactoryShopfloorLayoutComponent.TOKEN_ELEMENT_CLASS);
+        group.setAttribute('id', `inferredToken${token.number}`);
+
         const circle = document.createElementNS(svgNs, 'circle');
-        circle.setAttribute('id', FactoryShopfloorLayoutComponent.TOKEN_ELEMENT_ID);
-        circle.setAttribute('cx', String(box.x + box.width / 2));
-        circle.setAttribute('cy', String(box.y + box.height / 2));
+        circle.setAttribute('cx', String(cx));
+        circle.setAttribute('cy', String(cy));
         circle.setAttribute('r', '12');
-        circle.setAttribute('fill', token.color ? FactoryShopfloorLayoutComponent.TOKEN_FILL_BY_COLOR[token.color] : '#9ca3af');
-        circle.setAttribute('stroke', token.anomaly ? '#dc2626' : '#111827');
-        circle.setAttribute('stroke-width', token.anomaly ? '3' : '2');
-        if (token.anomaly) {
+        if (token.present) {
+            circle.setAttribute('fill', token.color ? FactoryShopfloorLayoutComponent.TOKEN_FILL_BY_COLOR[token.color] : '#9ca3af');
+            circle.setAttribute('stroke', token.anomaly ? '#dc2626' : '#111827');
+            circle.setAttribute('stroke-width', token.anomaly ? '3' : '2');
+            if (token.anomaly) {
+                circle.setAttribute('stroke-dasharray', '4 3');
+            }
+        } else {
+            // trace of the last known position: the token is no longer there
+            group.setAttribute('opacity', '0.6');
+            circle.setAttribute('fill', 'none');
+            circle.setAttribute('stroke', token.anomaly ? '#dc2626' : '#94a3b8');
+            circle.setAttribute('stroke-width', '2');
             circle.setAttribute('stroke-dasharray', '4 3');
         }
+
+        const label = document.createElementNS(svgNs, 'text');
+        label.setAttribute('x', String(cx));
+        label.setAttribute('y', String(cy));
+        label.setAttribute('text-anchor', 'middle');
+        label.setAttribute('dominant-baseline', 'central');
+        label.setAttribute('font-size', '12');
+        label.setAttribute('font-weight', '700');
+        label.setAttribute('fill', !token.present ? '#64748b'
+            : token.color === 'RED' || token.color === 'BLUE' ? '#ffffff' : '#111827');
+        label.setAttribute('pointer-events', 'none');
+        label.textContent = String(token.number);
+
+        const title = document.createElementNS(svgNs, 'title');
+        title.textContent = FactoryShopfloorLayoutComponent.describeToken(token);
+        group.append(title, circle, label);
+
         const anchorTransform = anchor.getAttribute('transform');
         if (anchorTransform && anchor.tagName.toLowerCase() !== 'g') {
-            circle.setAttribute('transform', anchorTransform);
+            group.setAttribute('transform', anchorTransform);
         }
-        const title = document.createElementNS(svgNs, 'title');
-        title.textContent = this.tokenDescription;
-        circle.appendChild(title);
-
         const container = anchor.tagName.toLowerCase() === 'g' ? anchor : anchor.parentNode;
-        container?.appendChild(circle);
+        container?.appendChild(group);
     }
 
     /**
@@ -269,6 +362,7 @@ export class FactoryShopfloorLayoutComponent implements AfterViewInit, OnDestroy
         const machineEl = this.machineCache.get(update.machineId);
         if (!machineEl) return;
 
+        machine.failedSince = this.failedMachines.get(update.machineId) ?? null;
         machine.render(machineEl); // model handles the rendering (a VGR then follows its arm, see onArmFrame)
     }
 }

@@ -15,4 +15,30 @@ export interface ReplanningIncident {
     createdAt: string;
     resolvedAt?: string;
     operatorComment?: string;
+    replanningPlan?: ReplanningPlan | null;
+}
+
+/** Mirrors the backend's mbdo.dt.replanning.ReplanningPlan: what the digital twin does to the SCADA, at once. */
+export type ReplanningPlanStatus = 'WAITING' | 'PLANNED' | 'EXECUTING' | 'EXECUTED' | 'FAILED';
+
+export interface ReplanningPlan {
+    strategy: string;
+    description: string;
+    anomalyId: string | null;
+    status: ReplanningPlanStatus;
+    steps: ReplanningPlanStep[];
+    problems: string[];
+    message: string | null;
+}
+
+export interface ReplanningPlanStep {
+    kind: 'STOP_MISSION' | 'MIGRATE';
+    machine: string;
+    rule: string | null;
+    fromMission: string | null;
+    fromState: string | null;
+    toMission: string | null;
+    toState: string | null;
+    status: 'PENDING' | 'DONE' | 'FAILED' | 'SKIPPED';
+    detail: string;
 }

@@ -1,6 +1,7 @@
 package mbdo.dt.incident;
 
 import mbdo.dt.domain.AnomalyContext;
+import mbdo.dt.replanning.ReplanningPlan;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -63,6 +64,23 @@ public class ReplanningIncidentRegistryService {
         }
 
         return Optional.of(resolved);
+    }
+
+    /**
+     * Attaches a replanning plan to the open incident raised by the anomaly {@code anomalyId}.
+     *
+     * @return the updated incident, or empty if that incident is not open any more
+     */
+    public synchronized Optional<ReplanningIncidentResponse> attachPlan(String anomalyId, ReplanningPlan plan) {
+        if (currentIncident == null) {
+            return Optional.empty();
+        }
+        AnomalyContext context = originatingContexts.get(currentIncident.getId());
+        if (context == null || !context.anomalyId().equals(anomalyId)) {
+            return Optional.empty();
+        }
+        currentIncident = currentIncident.withPlan(plan);
+        return Optional.of(currentIncident);
     }
 
     public Optional<AnomalyContext> getOriginatingContext(long id) {

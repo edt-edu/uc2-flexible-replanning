@@ -40,6 +40,11 @@ public class ReplanningIncidentSseService {
         broadcast("incident-opened", incident);
     }
 
+    /** The incident changed while open: its replanning plan was computed, or progressed. */
+    public void broadcastUpdated(ReplanningIncidentResponse incident) {
+        broadcast("incident-updated", incident);
+    }
+
     public void broadcastResolved(ReplanningIncidentResponse incident) {
         broadcast("incident-resolved", incident);
     }

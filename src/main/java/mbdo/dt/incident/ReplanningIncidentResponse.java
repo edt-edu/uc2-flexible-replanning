@@ -1,5 +1,7 @@
 package mbdo.dt.incident;
 
+import mbdo.dt.replanning.ReplanningPlan;
+
 import java.time.Instant;
 
 /**
@@ -19,6 +21,7 @@ public class ReplanningIncidentResponse {
     private final Instant createdAt;
     private final Instant resolvedAt;
     private final String operatorComment;
+    private final ReplanningPlan replanningPlan;
 
     public ReplanningIncidentResponse(
             long id,
@@ -31,6 +34,21 @@ public class ReplanningIncidentResponse {
             Instant resolvedAt,
             String operatorComment
     ) {
+        this(id, machineId, message, requiredAction, status, startTime, createdAt, resolvedAt, operatorComment, null);
+    }
+
+    public ReplanningIncidentResponse(
+            long id,
+            String machineId,
+            String message,
+            String requiredAction,
+            ReplanningIncidentStatus status,
+            Instant startTime,
+            Instant createdAt,
+            Instant resolvedAt,
+            String operatorComment,
+            ReplanningPlan replanningPlan
+    ) {
         this.id = id;
         this.machineId = machineId;
         this.message = message;
@@ -40,6 +58,7 @@ public class ReplanningIncidentResponse {
         this.createdAt = createdAt;
         this.resolvedAt = resolvedAt;
         this.operatorComment = operatorComment;
+        this.replanningPlan = replanningPlan;
     }
 
     public long getId() {
@@ -78,10 +97,22 @@ public class ReplanningIncidentResponse {
         return operatorComment;
     }
 
+    /** The replanning of the incident (waiting, being executed, or executed), null if none. */
+    public ReplanningPlan getReplanningPlan() {
+        return replanningPlan;
+    }
+
     public ReplanningIncidentResponse resolved(String comment, Instant resolvedAt) {
         return new ReplanningIncidentResponse(
                 id, machineId, message, requiredAction, ReplanningIncidentStatus.RESOLVED,
-                startTime, createdAt, resolvedAt, comment
+                startTime, createdAt, resolvedAt, comment, replanningPlan
+        );
+    }
+
+    public ReplanningIncidentResponse withPlan(ReplanningPlan plan) {
+        return new ReplanningIncidentResponse(
+                id, machineId, message, requiredAction, status,
+                startTime, createdAt, resolvedAt, operatorComment, plan
         );
     }
 }

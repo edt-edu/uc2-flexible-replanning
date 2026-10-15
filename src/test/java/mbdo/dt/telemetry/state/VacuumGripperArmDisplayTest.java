@@ -88,6 +88,25 @@ class VacuumGripperArmDisplayTest {
     }
 
     @Test
+    void theArmIsAtZeroDegreesAtZeroRotationCounts() {
+        for (String vgr : List.of("VGRSystemModel_01", "VGRSystemModel_02")) {
+            VacuumGripperArmCalibration calibration = VacuumGripperArmCalibration.forMachine(vgr).orElseThrow();
+            assertEquals(0d, calibration.angle(0), 1e-9, vgr);
+            assertEquals(0d, calibration.angle(-100), 1e-9, vgr + ": below the axis range");
+        }
+    }
+
+    @Test
+    void theRotationStopsAtTheEndOfTheAxis() {
+        for (String vgr : List.of("VGRSystemModel_01", "VGRSystemModel_02")) {
+            VacuumGripperArmCalibration calibration = VacuumGripperArmCalibration.forMachine(vgr).orElseThrow();
+            double atMax = calibration.angle(VacuumGripperArmCalibration.MAX_ROTATION_COUNTS);
+            assertEquals(atMax, calibration.angle(4000), 1e-9, vgr);
+            assertTrue(Math.abs(atMax) > Math.abs(calibration.angle(2900)), vgr + ": still turning before 2990");
+        }
+    }
+
+    @Test
     void afterSetupTheArmIsDrawnAtTheReferencePosition() {
         VacuumGripperState state = new VacuumGripperState("VGRSystemModel_01");
         state.applyAttribute("vacuumSensRotEncoderCounter", 2400, Instant.now());
