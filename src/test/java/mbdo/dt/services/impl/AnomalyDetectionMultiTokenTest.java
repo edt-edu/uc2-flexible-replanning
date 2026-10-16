@@ -169,7 +169,7 @@ class AnomalyDetectionMultiTokenTest {
         vgr1BringsTheBlueTokenToTheFeed();
         tokenEntersTheSortingLine(); // the second token
 
-        clock.addAndGet(16_000); // the first token stays on the feed: the belt failed
+        clock.addAndGet(26_000); // the first token stays on the feed: the belt failed
         AnomalyEvaluationResult result = detection.checkTimeTransitions();
 
         assertEquals(EvaluationStatus.ANOMALY_DETECTED, result.status());
@@ -192,7 +192,7 @@ class AnomalyDetectionMultiTokenTest {
         tokenReachesTheBlueChute();
         vgr1BringsTheBlueTokenToTheFeed();
         tokenEntersTheSortingLine(); // the second token
-        clock.addAndGet(16_000);
+        clock.addAndGet(26_000);
         String anomalyId = detection.checkTimeTransitions().anomalyContext().anomalyId();
         assertEquals(anomalyId, detection.getTokens().get(0).anomalyId());
         assertNull(detection.getTokens().get(1).anomalyId());

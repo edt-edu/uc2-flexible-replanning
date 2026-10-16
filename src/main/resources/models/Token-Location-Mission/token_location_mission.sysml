@@ -77,7 +77,6 @@ package token_definitions {
 
             state TokenPickedUpByVGR1;
             state TokenDroppedOffAtConveyorBeltFeed;
-            state TokenOnConveyorBelt;
             state TokenAtConveyorBeltSwap;
             state TokenPickedUpByVGR2;
             state TokenDroppedOffAtMPOInput;
@@ -150,11 +149,7 @@ package token_definitions {
             transition Token_t4
                 first TokenDroppedOffAtConveyorBeltFeed
                 accept when cb.conveyorSensFeed == true
-                then TokenOnConveyorBelt;
-
-            transition Token_t4Swap
-                first TokenOnConveyorBelt
-                accept when cb.conveyorSensSwap == false
+                    and cb.conveyorSensSwap == false
                 then TokenAtConveyorBeltSwap;
 
             transition Token_t5
@@ -190,15 +185,16 @@ package token_definitions {
             in maxDuration :> ISQ::time;
         }
 
-
+        // The token doesn't get from the feed to the swap: it stays on the feed, or stops between the light barriers
         assert constraint ConveyorBeltFeedDepartureLimit : StateDurationLimit {
             in constrainedStateName = "TokenDroppedOffAtConveyorBeltFeed";
-            in maxDuration = 15 [s];
+            in maxDuration = 25 [s];
         }
 
-        assert constraint ConveyorBeltSwapArrivalLimit : StateDurationLimit {
-            in constrainedStateName = "TokenOnConveyorBelt";
-            in maxDuration = 10 [s];
+        // The token doesn't leave the swap: VGR2 doesn't pick it
+        assert constraint ConveyorBeltSwapDepartureLimit : StateDurationLimit {
+            in constrainedStateName = "TokenAtConveyorBeltSwap";
+            in maxDuration = 20 [s];
         }
     }
 }

@@ -33,13 +33,24 @@ package Replanning {
         attribute waitStates : String[*];
     }
 
+    doc
+    /* How a failed machine is stopped: its mission, then the command it executes (a stop command). Each transition
+       is a command run in between, when its guard holds ("accept when", on the same observations as the migration
+       rules): "then" names the command, an action of the machine definition. The first transition whose guard holds
+       is applied; none: the machine is stopped at once. The replanning waits for the command to end. */
+    state def MachineStop {
+        attribute machine : String;
+        /* the DIRECTION parameter of the commands, if they take one (FORWARD, BACKWARD) */
+        attribute direction : String[0..1];
+    }
+
     part def ReplanningStrategy {
         attribute description : String;
         /* the constraints whose violation triggers the strategy (e.g. StateDurationLimits of TokenLocation) */
         attribute triggerConstraint : String[*];
         /* or the TokenLocation state in which the anomaly was detected */
         attribute triggerState : String;
-        /* the machines whose missions are stopped (the failed ones) */
+        /* the machines whose missions are stopped (the failed ones), the way their MachineStop gives, if any */
         attribute stoppedMachines : String[*];
         /* the MissionMigration applied, in this order */
         attribute migrations : String[*];

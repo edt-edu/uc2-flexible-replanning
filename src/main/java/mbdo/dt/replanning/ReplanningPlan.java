@@ -30,8 +30,10 @@ public record ReplanningPlan(
     }
 
     /**
-     * @param rule   the migration rule applied, "same state" if none, null for a stop
-     * @param detail what happens (or happened, or why it failed)
+     * @param rule    the migration rule applied, "same state" if none; for a stop, the MachineStop rule whose command
+     *                runs before the stop command, or null
+     * @param toState for a stop, the command run before the stop command, or null
+     * @param detail  what happens (or happened, or why it failed)
      */
     public record Step(
             Kind kind,

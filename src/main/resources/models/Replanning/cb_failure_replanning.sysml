@@ -5,24 +5,40 @@ package CBFailureReplanning {
 
     doc
     /* The conveyor belt fails: the token dropped at its feed doesn't reach the swap. The belt is stopped (its mission,
-       then the command it executes), and its feed and swap become two slots the grippers exchange the tokens through.
+       then the command it executes; CB_Stop), and its feed and swap become two slots the grippers exchange the tokens
+       through.
        The CB zone becomes the dead CB zone (ZoneMissionDeadCB): it knows which slots hold a token, in which order.
        VacuumGripper1CBFailureMission asks it where to place each token, VacuumGripper2CBFailureMission where to pick
        one, oldest first. The zone is migrated first, so that it answers the grippers as soon as they are migrated. */
 
     part cbFailure : ReplanningStrategy {
         attribute :>> description = "Conveyor belt failure: the belt is stopped, the grippers exchange the tokens on its feed and swap through the dead CB zone";
-        attribute :>> triggerConstraint = ("ConveyorBeltFeedDepartureLimit", "ConveyorBeltSwapArrivalLimit");
+        attribute :>> triggerConstraint = ("ConveyorBeltFeedDepartureLimit", "ConveyorBeltSwapDepartureLimit");
         attribute :>> stoppedMachines = ("REN_MISSION_01/CB01");
         attribute :>> migrations = ("ZoneCB_NominalToDeadCB", "VGR1_NominalToCBFailure", "VGR2_NominalToCBFailure");
         attribute :>> recoveryStrategy = "cbRepaired";
     }
 
     doc
+    /* The token may have stopped between the light barriers: it left the feed, but the swap doesn't see it. The
+       grippers can't reach it there: the belt brings it to the swap before it stops, for the dead CB zone to count it
+       (zone_tokenBroughtToSwap). */
+    state def CB_Stop :> MachineStop {
+        attribute :>> machine = "REN_MISSION_01/CB01";
+        attribute :>> direction = "FORWARD";
+
+        transition cb_bringTokenToSwap
+            accept when tokenLocation.state == "TokenDroppedOffAtConveyorBeltFeed"
+                and cb.conveyorSensFeed == true and cb.conveyorSensSwap == true
+            then moveToSensor;
+    }
+
+    doc
     /* The dead CB zone starts in the state the belt's light barriers (active-low) give, whatever the state of the
        nominal zone: both slots hold a token (the one on the swap is the older: VGR2 hadn't taken it yet), only the
-       feed, only the swap, or none. The most specific rule first. A gripper over the belt (the nominal zone tracks it)
-       would then tell the dead zone of a token it already counts from the light barriers: the zone waits for it. */
+       feed, only the swap, or none; the token CB_Stop brings to the swap counts there. The most specific rule first.
+       A gripper over the belt (the nominal zone tracks it) would then tell the dead zone of a token it already counts
+       from the light barriers: the zone waits for it. */
     state def ZoneCB_NominalToDeadCB :> MissionMigration {
         attribute :>> machine = "ZoneCB";
         attribute :>> fromMission = "ZoneMissionCBNominal";
@@ -41,6 +57,11 @@ package CBFailureReplanning {
 
         transition zone_tokenOnSwap
             accept when cb.conveyorSensSwap == false
+            then ZoneMissionDeadCB::TokenOnSwap;
+
+        transition zone_tokenBroughtToSwap
+            accept when tokenLocation.state == "TokenDroppedOffAtConveyorBeltFeed"
+                and cb.conveyorSensFeed == true and cb.conveyorSensSwap == true
             then ZoneMissionDeadCB::TokenOnSwap;
 
         transition zone_empty

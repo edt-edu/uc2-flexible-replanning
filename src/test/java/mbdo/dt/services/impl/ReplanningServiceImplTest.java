@@ -30,6 +30,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 import static mbdo.dt.replanning.ReplanningTestModels.CB;
 import static mbdo.dt.replanning.ReplanningTestModels.VGR1;
@@ -40,6 +41,7 @@ import static mbdo.dt.replanning.ReplanningTestModels.vgr1;
 import static mbdo.dt.replanning.ReplanningTestModels.vgr2;
 import static mbdo.dt.replanning.ReplanningTestModels.zoneCB;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -96,7 +98,8 @@ class ReplanningServiceImplTest {
         @Override
         public synchronized ScadaCommandResult executeCommand(String machine, String command,
                                                               List<Map<String, Object>> parameters, long timeoutMs) {
-            requests.add("command " + machine + " " + command);
+            requests.add("command " + machine + " " + command + parameters.stream()
+                    .map(p -> " " + ((Map<?, ?>) p.get("passable")).get("direction")).collect(Collectors.joining()));
             String status = commandStatuses.getOrDefault(command, "DONE");
             return new ScadaCommandResult(machine, machine, command, "1", status, status.equals("DONE"), 10);
         }
@@ -168,6 +171,7 @@ class ReplanningServiceImplTest {
                 List.of(false, true), "TokenOnFeed",
                 List.of(true, false), "TokenOnSwap",
                 List.of(false, false), "SwapThenFeed");
+        values.remove(ReplanningServiceImpl.TOKEN_LOCATION_STATE); // no token between the light barriers
         for (String state : List.of("Empty", "TokenOnFeed", "TokenOnSwap", "SwapThenFeed")) {
             scada.machines.put(ZONE_CB, zoneCB("ZoneMissionCBNominal", state));
             expected.forEach((feedAndSwap, deadCBState) -> {
@@ -177,6 +181,28 @@ class ReplanningServiceImplTest {
                 assertEquals(deadCBState, plan().steps().get(1).toState(), state + " " + feedAndSwap);
             });
         }
+    }
+
+    @Test
+    void aTokenStoppedBetweenTheLightBarriersIsBroughtToTheSwapBeforeTheStopAndCountedThere() {
+        tokenBetweenTheLightBarriers();
+
+        ReplanningPlan plan = plan();
+
+        assertEquals(Status.PLANNED, plan.status(), plan.problems().toString());
+        assertEquals("cb_bringTokenToSwap", plan.steps().get(0).rule());
+        assertEquals("moveToSensor", plan.steps().get(0).toState());
+        assertEquals("TokenOnSwap", plan.steps().get(1).toState(), "the dead CB zone counts it on the swap");
+        assertEquals("CheckCB", plan.steps().get(3).toState(), "VGR2 asks the zone at once: the token on the swap");
+    }
+
+    @Test
+    void aTokenOnTheFeedOrTheSwapNeedsNoMoveBeforeTheStop() {
+        assertNull(plan().steps().get(0).toState());
+
+        values.put("cb.conveyorSensFeed", true);
+        values.put("cb.conveyorSensSwap", false);
+        assertNull(plan().steps().get(0).toState());
     }
 
     @Test
@@ -284,11 +310,49 @@ class ReplanningServiceImplTest {
     }
 
     @Test
-    void aBeltThatDoesNotStartTriggersTheSameReplanning() {
-        ReplanningPlan executed = replanned("ConveyorBeltFeedDepartureLimit");
+    void theBeltBringsATokenStoppedBetweenTheLightBarriersToTheSwapThenStops() {
+        tokenBetweenTheLightBarriers();
+
+        ReplanningPlan executed = replanned();
 
         assertEquals(Status.EXECUTED, executed.status(), executed.message());
-        assertEquals("cbFailure", executed.strategy());
+        assertEquals(List.of(
+                "stop " + CB,
+                "command " + CB + " moveToSensor FORWARD",
+                "command " + CB + " stop",
+                "swap " + ZONE_CB + " ZoneMissionDeadCB::TokenOnSwap",
+                "swap " + VGR1 + " VacuumGripper1CBFailureMission::AskSortingLine",
+                "swap " + VGR2 + " VacuumGripper2CBFailureMission::CheckCB"), scada.requests);
+    }
+
+    @Test
+    void aTokenThatStaysAtTheSwapIsCountedThereWithoutMovingTheBelt() {
+        values.put("cb.conveyorSensFeed", true);
+        values.put("cb.conveyorSensSwap", false);
+        values.put(ReplanningServiceImpl.TOKEN_LOCATION_STATE, "TokenAtConveyorBeltSwap");
+
+        ReplanningPlan executed = replanned("ConveyorBeltSwapDepartureLimit");
+
+        assertEquals(Status.EXECUTED, executed.status(), executed.message());
+        assertEquals(List.of(
+                "stop " + CB,
+                "command " + CB + " stop",
+                "swap " + ZONE_CB + " ZoneMissionDeadCB::TokenOnSwap",
+                "swap " + VGR1 + " VacuumGripper1CBFailureMission::AskSortingLine",
+                "swap " + VGR2 + " VacuumGripper2CBFailureMission::CheckCB"), scada.requests);
+    }
+
+    @Test
+    void aBeltThatCannotBringTheTokenToTheSwapStopsTheReplanning() {
+        tokenBetweenTheLightBarriers();
+        scada.commandStatuses.put("moveToSensor", "TIMEOUT");
+
+        ReplanningPlan executed = replanned();
+
+        assertEquals(Status.FAILED, executed.status());
+        assertTrue(executed.steps().get(0).detail().contains("moveToSensor"), executed.steps().get(0).detail());
+        assertTrue(scada.requests.stream().noneMatch(r -> r.startsWith("swap ")),
+                "the dead CB zone would not know of the token");
     }
 
     @Test
@@ -396,17 +460,16 @@ class ReplanningServiceImplTest {
 
     /** Raises the swap arrival anomaly, and waits for its replanning to end. */
     private ReplanningPlan replanned() {
-        return replanned("ConveyorBeltSwapArrivalLimit");
+        return replanned("ConveyorBeltFeedDepartureLimit");
     }
 
     /** Raises the anomaly of the violated {@code constraint}, and waits for its replanning to end. */
     private ReplanningPlan replanned(String constraint) {
-        AnomalyContext context = new AnomalyContext(ANOMALY, Instant.now(), "TokenLocation",
-                "TokenDroppedOffAtConveyorBeltFeed", "cb", "TokenDroppedOffAtConveyorBeltFeed",
-                "TokenDroppedOffAtConveyorBeltFeed", "Token #1: feed departure limit");
+        String state = (String) values.get(ReplanningServiceImpl.TOKEN_LOCATION_STATE);
+        AnomalyContext context = new AnomalyContext(ANOMALY, Instant.now(), "TokenLocation", state, "cb", state,
+                state, "Token #1: " + constraint);
         service.handleAnomaly(null, new AnomalyEvaluationResult(EvaluationStatus.ANOMALY_DETECTED, "TokenLocation",
-                "TokenLocation", "TokenDroppedOffAtConveyorBeltFeed", "TokenDroppedOffAtConveyorBeltFeed",
-                constraint, constraint, context), new HashMap<>(values));
+                "TokenLocation", state, state, constraint, constraint, context), new HashMap<>(values));
         long deadline = System.currentTimeMillis() + 3000;
         while (System.currentTimeMillis() < deadline) {
             synchronized (published) {
@@ -420,6 +483,12 @@ class ReplanningServiceImplTest {
             sleep(10);
         }
         throw new AssertionError("The replanning didn't end: " + published);
+    }
+
+    /** The token left the feed, but the belt stopped before the swap: neither light barrier sees it. */
+    private void tokenBetweenTheLightBarriers() {
+        values.put("cb.conveyorSensFeed", true);
+        values.put("cb.conveyorSensSwap", true);
     }
 
     private void tokenStuckOnTheFeed() {

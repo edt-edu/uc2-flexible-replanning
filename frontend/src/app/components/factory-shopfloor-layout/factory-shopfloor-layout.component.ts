@@ -108,7 +108,6 @@ export class FactoryShopfloorLayoutComponent implements AfterViewInit, OnDestroy
         'sl-blue': 'sortingLineSensBlueLightBarrierSLSystemModel',
         'vgr1': 'vgrEndEffectorVGRSystemModel_01',
         'cb-feed': 'sensorFeedCBSystemModel',
-        'cb-belt': 'beltSurfaceCBSystemModel',
         'cb-swap': 'sensorSwapCBSystemModel',
         'vgr2': 'vgrEndEffectorVGRSystemModel_02',
         'mps-input': 'sensorInMPSystemModel',

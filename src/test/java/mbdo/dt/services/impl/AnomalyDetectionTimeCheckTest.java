@@ -90,10 +90,10 @@ class AnomalyDetectionTimeCheckTest {
         observe("cb.conveyorSensFeed", false);
         assertEquals("TokenDroppedOffAtConveyorBeltFeed", detection.getCurrentState());
 
-        clock.addAndGet(14_000);
+        clock.addAndGet(24_000);
         assertEquals(EvaluationStatus.WAITING_FOR_MATCH, detection.checkTimeTransitions().status());
 
-        clock.addAndGet(2_000); // past the 15 s of ConveyorBeltFeedDepartureLimit
+        clock.addAndGet(2_000); // past the 25 s of ConveyorBeltFeedDepartureLimit
         AnomalyEvaluationResult result = detection.checkTimeTransitions();
         assertEquals(EvaluationStatus.ANOMALY_DETECTED, result.status());
         assertEquals("ConveyorBeltFeedDepartureLimit", result.transitionName());
@@ -114,36 +114,39 @@ class AnomalyDetectionTimeCheckTest {
     }
 
     @Test
-    void aTokenWaitingAtTheSwapForVgr2IsNoAnomaly() {
+    void aTokenThatStaysAtTheSwapViolatesTheSwapDepartureLimit() {
         tokenDroppedAtTheBeltFeed();
         observe("cb.conveyorSensFeed", true);
-        assertEquals("TokenOnConveyorBelt", detection.getCurrentState());
+        assertEquals("TokenDroppedOffAtConveyorBeltFeed", detection.getCurrentState(), "carried by the belt");
         clock.addAndGet(4_000);
         observe("cb.conveyorSensSwap", false);
         assertEquals("TokenAtConveyorBeltSwap", detection.getCurrentState());
 
-        // VGR2 waits for the MPS to be free before it takes the token
-        clock.addAndGet(60_000);
-        assertEquals(EvaluationStatus.WAITING_FOR_MATCH, detection.checkTimeTransitions().status());
-        assertTrue(reactedTo.stream().noneMatch(r -> r.status() == EvaluationStatus.ANOMALY_DETECTED),
-                reactedTo.toString());
-    }
-
-    @Test
-    void aTokenThatLeavesTheFeedButNeverReachesTheSwapViolatesTheSwapArrivalLimit() {
-        tokenDroppedAtTheBeltFeed();
-        clock.addAndGet(3_000);
-        observe("cb.conveyorSensFeed", true); // the belt starts, then stops on the way
-        assertEquals("TokenOnConveyorBelt", detection.getCurrentState());
-
-        clock.addAndGet(9_000);
+        clock.addAndGet(19_000);
         assertEquals(EvaluationStatus.WAITING_FOR_MATCH, detection.checkTimeTransitions().status());
 
-        clock.addAndGet(2_000); // past the 10 s of ConveyorBeltSwapArrivalLimit
+        clock.addAndGet(2_000); // past the 20 s of ConveyorBeltSwapDepartureLimit: VGR2 didn't pick it
         AnomalyEvaluationResult result = detection.checkTimeTransitions();
 
         assertEquals(EvaluationStatus.ANOMALY_DETECTED, result.status());
-        assertEquals("ConveyorBeltSwapArrivalLimit", result.transitionName());
+        assertEquals("ConveyorBeltSwapDepartureLimit", result.transitionName());
+    }
+
+    @Test
+    void aTokenThatLeavesTheFeedButNeverReachesTheSwapViolatesTheFeedDepartureLimit() {
+        tokenDroppedAtTheBeltFeed();
+        clock.addAndGet(3_000);
+        observe("cb.conveyorSensFeed", true); // the belt starts, then stops on the way
+        assertEquals("TokenDroppedOffAtConveyorBeltFeed", detection.getCurrentState());
+
+        clock.addAndGet(21_000);
+        assertEquals(EvaluationStatus.WAITING_FOR_MATCH, detection.checkTimeTransitions().status());
+
+        clock.addAndGet(2_000); // past the 25 s of ConveyorBeltFeedDepartureLimit, from the drop on the feed
+        AnomalyEvaluationResult result = detection.checkTimeTransitions();
+
+        assertEquals(EvaluationStatus.ANOMALY_DETECTED, result.status());
+        assertEquals("ConveyorBeltFeedDepartureLimit", result.transitionName());
     }
 
     /** Up to the token waiting in the blue chute (Token_t0, Token_t1Blue), with VGR1 holding the vacuum. */

@@ -19,11 +19,16 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * The replanning strategies ({@code part <name> : ReplanningStrategy { ... }}) and mission migrations
- * ({@code state def <name> :> MissionMigration { ... }}) of the SysML models (see
- * models/Replanning/replanning_def.sysml).
+ * The replanning strategies ({@code part <name> : ReplanningStrategy { ... }}), mission migrations
+ * ({@code state def <name> :> MissionMigration { ... }}) and machine stops ({@code state def <name> :> MachineStop
+ * { ... }}) of the SysML models (see models/Replanning/replanning_def.sysml).
  */
-public record ReplanningModel(List<Strategy> strategies, Map<String, Migration> migrations) {
+public record ReplanningModel(List<Strategy> strategies, Map<String, Migration> migrations,
+                              Map<String, MachineStop> stops) {
+
+    public ReplanningModel(List<Strategy> strategies, Map<String, Migration> migrations) {
+        this(strategies, migrations, Map.of());
+    }
 
     /**
      * A reaction to an anomaly: stops the missions of the failed machines and migrates the other machines to
@@ -74,6 +79,20 @@ public record ReplanningModel(List<Strategy> strategies, Map<String, Migration> 
     }
 
     /**
+     * How a failed machine is stopped: between the stop of its mission and its stop command, it runs the command of
+     * the first rule whose guard holds (the rule's {@code toState}), if any.
+     *
+     * @param direction the DIRECTION parameter of the commands, or null
+     */
+    public record MachineStop(String name, String machine, String direction, List<Rule> rules) {
+
+        /** The rule whose command runs before the stop, if any. */
+        public Optional<Rule> ruleBeforeStop(Map<String, ?> values) {
+            return rules.stream().filter(r -> r.holds(values)).findFirst();
+        }
+    }
+
+    /**
      * A migration rule: from {@code fromState} of the running mission (any state if null), when {@code guard} holds,
      * the alternative mission starts in {@code toState}.
      *
@@ -107,6 +126,11 @@ public record ReplanningModel(List<Strategy> strategies, Map<String, Migration> 
         }
     }
 
+    /** How {@code machine} is stopped, if a MachineStop names it. */
+    public Optional<MachineStop> findStop(String machine) {
+        return stops.values().stream().filter(s -> s.machine().equals(machine)).findFirst();
+    }
+
     public Optional<Strategy> findStrategy(String name) {
         return strategies.stream().filter(s -> s.name().equals(name)).findFirst();
     }
@@ -123,6 +147,8 @@ public record ReplanningModel(List<Strategy> strategies, Map<String, Migration> 
             "\\bpart\\s+([A-Za-z_]\\w*)\\s*:\\s*(?:\\w+::)*ReplanningStrategy\\s*\\{");
     private static final Pattern MIGRATION = Pattern.compile(
             "\\bstate\\s+def\\s+([A-Za-z_]\\w*)\\s*:>\\s*(?:\\w+::)*MissionMigration\\s*\\{");
+    private static final Pattern STOP = Pattern.compile(
+            "\\bstate\\s+def\\s+([A-Za-z_]\\w*)\\s*:>\\s*(?:\\w+::)*MachineStop\\s*\\{");
     private static final Pattern ATTRIBUTE = Pattern.compile(
             "\\battribute\\s+(?::>>\\s*)?([A-Za-z_]\\w*)\\s*(?::[^=;{]+)?=\\s*(\"[^\"]*\"|\\([^)]*\\)|[^;]+);");
     /** transition [name] [first State] [accept when guard] then State; */
@@ -141,6 +167,7 @@ public record ReplanningModel(List<Strategy> strategies, Map<String, Migration> 
     public static ReplanningModel load(String pattern) {
         List<Strategy> strategies = new ArrayList<>();
         Map<String, Migration> migrations = new LinkedHashMap<>();
+        Map<String, MachineStop> stops = new LinkedHashMap<>();
         try {
             for (Resource resource : new PathMatchingResourcePatternResolver().getResources(pattern)) {
                 ReplanningModel model;
@@ -151,11 +178,12 @@ public record ReplanningModel(List<Strategy> strategies, Map<String, Migration> 
                 }
                 strategies.addAll(model.strategies());
                 migrations.putAll(model.migrations());
+                stops.putAll(model.stops());
             }
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
-        return new ReplanningModel(List.copyOf(strategies), Map.copyOf(migrations));
+        return new ReplanningModel(List.copyOf(strategies), Map.copyOf(migrations), Map.copyOf(stops));
     }
 
     public static ReplanningModel parse(String sysml) {
@@ -184,26 +212,43 @@ public record ReplanningModel(List<Strategy> strategies, Map<String, Migration> 
             String fromMission = SysMLParserUtils.cleanValue(attributes.get("fromMission"));
             String toMission = require(attributes, "toMission", name);
 
-            List<Rule> rules = new ArrayList<>();
-            Matcher transition = TRANSITION.matcher(body);
-            while (transition.find()) {
-                String fromState = transition.group(2) == null ? null : stateOf(transition.group(2), fromMission, name);
-                String toState = stateOf(transition.group(4), toMission, name);
-                String guard = transition.group(3) == null ? "" : SysMLParserUtils.normalizeWhitespace(transition.group(3));
-                rules.add(new Rule(
-                        transition.group(1) != null ? transition.group(1) : (fromState == null ? "*" : fromState) + "->" + toState,
-                        fromState,
-                        toState,
-                        SysMLParserUtils.splitTopLevelAnd(guard).stream()
-                                .filter(clause -> !clause.isBlank())
-                                .map(SysMLParserUtils::parseCondition)
-                                .toList(),
-                        guard));
-            }
+            List<Rule> rules = rules(body, fromMission, toMission, name);
             migrations.put(name, new Migration(name, require(attributes, "machine", name), fromMission, toMission,
                     List.copyOf(rules), stringList(attributes.get("waitStates"))));
         }
-        return new ReplanningModel(List.copyOf(strategies), migrations);
+
+        Map<String, MachineStop> stops = new LinkedHashMap<>();
+        Matcher stop = STOP.matcher(content);
+        while (stop.find()) {
+            String name = stop.group(1);
+            String body = blockBody(content, stop.end() - 1);
+            Map<String, String> attributes = attributes(body);
+            // a rule's "then" names the command: no mission to check it against
+            stops.put(name, new MachineStop(name, require(attributes, "machine", name),
+                    SysMLParserUtils.cleanValue(attributes.get("direction")), rules(body, null, null, name)));
+        }
+        return new ReplanningModel(List.copyOf(strategies), migrations, stops);
+    }
+
+    /** The transitions of {@code body}, as rules: states of {@code fromMission} to states of {@code toMission}. */
+    private static List<Rule> rules(String body, String fromMission, String toMission, String name) {
+        List<Rule> rules = new ArrayList<>();
+        Matcher transition = TRANSITION.matcher(body);
+        while (transition.find()) {
+            String fromState = transition.group(2) == null ? null : stateOf(transition.group(2), fromMission, name);
+            String toState = stateOf(transition.group(4), toMission, name);
+            String guard = transition.group(3) == null ? "" : SysMLParserUtils.normalizeWhitespace(transition.group(3));
+            rules.add(new Rule(
+                    transition.group(1) != null ? transition.group(1) : (fromState == null ? "*" : fromState) + "->" + toState,
+                    fromState,
+                    toState,
+                    SysMLParserUtils.splitTopLevelAnd(guard).stream()
+                            .filter(clause -> !clause.isBlank())
+                            .map(SysMLParserUtils::parseCondition)
+                            .toList(),
+                    guard));
+        }
+        return rules;
     }
 
     /** "Mission::State" or "State": the state, checking the mission if given. */

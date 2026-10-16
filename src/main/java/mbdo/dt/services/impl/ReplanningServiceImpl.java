@@ -7,6 +7,7 @@ import mbdo.dt.incident.ReplanningIncidentJournal;
 import mbdo.dt.incident.ReplanningIncidentRegistryService;
 import mbdo.dt.incident.ReplanningIncidentSseService;
 import mbdo.dt.replanning.ReplanningModel;
+import mbdo.dt.replanning.ReplanningModel.MachineStop;
 import mbdo.dt.replanning.ReplanningModel.Migration;
 import mbdo.dt.replanning.ReplanningModel.Rule;
 import mbdo.dt.replanning.ReplanningModel.Strategy;
@@ -45,8 +46,9 @@ import java.util.function.Predicate;
  *     state of the first rule leaving its state whose guard holds, or else to the state of the same name;</li>
  *     <li>until every machine can be migrated (e.g. a gripper still over the belt), plans again every
  *     {@code retryDelayMs}, for at most {@code retryMaxMs}, while the anomaly's incident is open;</li>
- *     <li>executes it: stops the failed machines (their mission, then the command they execute), then swaps each
- *     migrated machine's mission atomically. A machine that moved on meanwhile makes it plan again.</li>
+ *     <li>executes it: stops the failed machines (their mission, then the command they execute; in between, the
+ *     command their MachineStop gives, e.g. the belt bringing a token to the swap), then swaps each migrated machine's
+ *     mission atomically. A machine that moved on meanwhile makes it plan again.</li>
  * </ol>
  * The plan is attached to the anomaly's incident at each step, for the operator to follow. Once the operator repaired
  * the failure, the strategy's recovery strategy brings the machines back to their nominal missions the same way.
@@ -248,9 +250,13 @@ public class ReplanningServiceImpl implements ReplanningService {
             }
             // the machine is stopped even if it runs no mission: it may still execute a command (a belt moving)
             String mission = machine.get().activeMission();
-            steps.add(new Step(Kind.STOP_MISSION, name, null, mission, machine.get().activeState(), null, null,
-                    StepStatus.PENDING, (mission == null ? "runs no mission" : "stop " + mission)
-                    + ", then send it a stop command"));
+            Optional<Rule> before = model.findStop(name).flatMap(stop -> stop.ruleBeforeStop(values));
+            String command = before.map(Rule::toState).orElse(null);
+            steps.add(new Step(Kind.STOP_MISSION, name, before.map(Rule::name).orElse(null), mission,
+                    machine.get().activeState(), null, command, StepStatus.PENDING,
+                    (mission == null ? "runs no mission" : "stop " + mission)
+                            + (command == null ? "" : ", then " + command + " (" + before.get().name() + ")")
+                            + ", then send it a stop command"));
         }
 
         for (String name : strategy.migrations()) {
@@ -365,6 +371,17 @@ public class ReplanningServiceImpl implements ReplanningService {
     private String stop(Step step) {
         scada.stopMission(step.machine(), null, null);
         String stopped = step.fromMission() == null ? "runs no mission" : "stopped " + step.fromMission();
+        String command = step.toState();
+        if (command != null) {
+            String direction = model.findStop(step.machine()).map(MachineStop::direction).orElse(null);
+            List<Map<String, Object>> parameters = direction == null ? List.of()
+                    : List.of(Map.of("passableType", "DIRECTION", "passable", Map.of("direction", direction)));
+            ScadaCommandResult before = scada.executeCommand(step.machine(), command, parameters, commandTimeoutMs);
+            if (!before.done()) {
+                throw new ScadaException(stopped + ", but its " + command + " command ended with " + before.status());
+            }
+            stopped += ", " + command + " done";
+        }
         ScadaCommandResult result = scada.executeCommand(step.machine(), STOP_COMMAND, List.of(), commandTimeoutMs);
         if (!result.done()) {
             throw new ScadaException(stopped + ", but its stop command ended with " + result.status());
