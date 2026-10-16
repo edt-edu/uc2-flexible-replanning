@@ -1,5 +1,5 @@
 import { Component, computed, DestroyRef, effect, inject, input, signal, untracked } from '@angular/core';
-import { DatePipe, NgTemplateOutlet } from '@angular/common';
+import { DatePipe } from '@angular/common';
 
 import { ReplanningIncident } from '../../models/replanning-incident.model';
 
@@ -12,26 +12,10 @@ const TICK_MS = 10 * 60 * 1000;
 /** Smallest bar width (in % of the track) so a very short incident stays clickable. */
 const MIN_BAR_PERCENT = 0.8;
 
-export interface TimelineBar {
-    incident: ReplanningIncident;
-    happening: boolean;
-    lane: number;
-    leftPercent: number;
-    widthPercent: number;
-    clippedStart: boolean;
-    clippedEnd: boolean;
-    ariaLabel: string;
-}
-
-export interface TimelineTick {
-    time: number;
-    leftPercent: number;
-}
-
 @Component({
     selector: 'app-incident-timeline',
     standalone: true,
-    imports: [DatePipe, NgTemplateOutlet],
+    imports: [DatePipe],
     templateUrl: './incident-timeline.component.html',
     styleUrls: ['./incident-timeline.component.css']
 })
@@ -44,84 +28,62 @@ export class IncidentTimelineComponent {
     readonly now = signal(Date.now());
     readonly selectedId = signal<number | null>(null);
     readonly detailsExpanded = signal(true);
-
-    readonly windowEnd = computed(() => this.now());
-    readonly windowStart = computed(() => this.windowEnd() - WINDOW_MS);
+    readonly windowStart = computed(() => this.now() - WINDOW_MS);
 
     /** Current + history merged by id (the live version wins), oldest start first. */
     readonly incidents = computed(() => {
-        const byId = new Map<number, ReplanningIncident>();
-        for (const incident of this.history()) {
-            byId.set(incident.id, incident);
-        }
         const current = this.currentIncident();
-        if (current) {
-            byId.set(current.id, current);
-        }
-        return [...byId.values()].sort((a, b) => this.startOf(a) - this.startOf(b));
+        const all = current ? [...this.history(), current] : this.history();
+        return [...new Map(all.map(incident => [incident.id, incident])).values()]
+            .sort((a, b) => this.startOf(a) - this.startOf(b));
     });
 
-    readonly bars = computed<TimelineBar[]>(() => {
+    readonly bars = computed(() => {
         const start = this.windowStart();
-        const end = this.windowEnd();
+        const end = this.now();
         const laneEnds: number[] = [];
-        const bars: TimelineBar[] = [];
-
-        for (const incident of this.incidents()) {
-            const happening = this.isHappening(incident);
-            const incidentStart = this.startOf(incident);
-            const incidentEnd = happening ? end : this.endOf(incident, end);
-            if (Number.isNaN(incidentStart) || incidentEnd < start || incidentStart > end) {
-                continue;
+        return this.incidents().flatMap(incident => {
+            const from = this.startOf(incident);
+            const to = this.endOf(incident);
+            if (Number.isNaN(from) || to < start || from > end) {
+                return [];
             }
-
-            const clippedFrom = Math.max(incidentStart, start);
-            const clippedTo = Math.min(Math.max(incidentEnd, incidentStart), end);
-
+            const shownFrom = Math.max(from, start);
+            const shownTo = Math.min(Math.max(to, from), end);
             // Greedy lane assignment so overlapping incidents do not hide each other.
-            let lane = laneEnds.findIndex(laneEnd => laneEnd < clippedFrom);
+            let lane = laneEnds.findIndex(laneEnd => laneEnd < shownFrom);
             if (lane === -1) {
                 lane = laneEnds.length;
-                laneEnds.push(clippedTo);
-            } else {
-                laneEnds[lane] = clippedTo;
             }
-
-            let leftPercent = ((clippedFrom - start) / WINDOW_MS) * 100;
-            const widthPercent = Math.max(((clippedTo - clippedFrom) / WINDOW_MS) * 100, MIN_BAR_PERCENT);
-            leftPercent = Math.min(leftPercent, 100 - widthPercent);
-
-            bars.push({
+            laneEnds[lane] = shownTo;
+            const width = Math.max(((shownTo - shownFrom) / WINDOW_MS) * 100, MIN_BAR_PERCENT);
+            return [{
                 incident,
-                happening,
                 lane,
-                leftPercent,
-                widthPercent,
-                clippedStart: incidentStart < start,
-                clippedEnd: !happening && incidentEnd > end,
-                ariaLabel: this.ariaLabelFor(incident, happening)
-            });
-        }
-        return bars;
+                width,
+                left: Math.min(((shownFrom - start) / WINDOW_MS) * 100, 100 - width),
+                happening: this.isHappening(incident),
+                clippedStart: from < start,
+                clippedEnd: to > end
+            }];
+        });
     });
 
     readonly laneCount = computed(() => Math.max(1, ...this.bars().map(bar => bar.lane + 1)));
     readonly happeningCount = computed(() => this.bars().filter(bar => bar.happening).length);
 
-    readonly ticks = computed<TimelineTick[]>(() => {
+    /** Tick positions, in % of the track. */
+    readonly ticks = computed(() => {
         const start = this.windowStart();
-        const end = this.windowEnd();
-        const ticks: TimelineTick[] = [];
-        for (let time = Math.ceil(start / TICK_MS) * TICK_MS; time <= end; time += TICK_MS) {
-            ticks.push({ time, leftPercent: ((time - start) / WINDOW_MS) * 100 });
+        const ticks: { time: number; left: number }[] = [];
+        for (let time = Math.ceil(start / TICK_MS) * TICK_MS; time <= this.now(); time += TICK_MS) {
+            ticks.push({ time, left: ((time - start) / WINDOW_MS) * 100 });
         }
         return ticks;
     });
 
-    readonly selectedIncident = computed(() => {
-        const id = this.selectedId();
-        return id === null ? null : this.incidents().find(incident => incident.id === id) ?? null;
-    });
+    readonly selectedIncident = computed(() =>
+        this.incidents().find(incident => incident.id === this.selectedId()) ?? null);
 
     constructor() {
         const timer = setInterval(() => this.now.set(Date.now()), REFRESH_MS);
@@ -135,15 +97,6 @@ export class IncidentTimelineComponent {
         });
     }
 
-    select(incident: ReplanningIncident): void {
-        this.selectedId.set(incident.id);
-        this.detailsExpanded.set(true);
-    }
-
-    toggleDetails(): void {
-        this.detailsExpanded.update(expanded => !expanded);
-    }
-
     isHappening(incident: ReplanningIncident): boolean {
         return incident.status === 'OPEN';
     }
@@ -152,38 +105,20 @@ export class IncidentTimelineComponent {
         return Date.parse(incident.startTime ?? incident.createdAt);
     }
 
-    /** End of the incident: resolution time, or `fallback` (now) while it is still happening. */
-    endOf(incident: ReplanningIncident, fallback = this.now()): number {
-        if (this.isHappening(incident) || !incident.resolvedAt) {
-            return fallback;
-        }
-        const resolved = Date.parse(incident.resolvedAt);
-        return Number.isNaN(resolved) ? fallback : resolved;
+    /** End of the incident: its resolution time, or now while it is still happening. */
+    endOf(incident: ReplanningIncident): number {
+        const resolved = this.isHappening(incident) ? NaN : Date.parse(incident.resolvedAt ?? '');
+        return Number.isNaN(resolved) ? this.now() : resolved;
     }
 
     durationOf(incident: ReplanningIncident): string {
-        return this.formatDuration(this.endOf(incident) - this.startOf(incident));
-    }
-
-    formatDuration(ms: number): string {
-        if (!Number.isFinite(ms) || ms < 0) {
+        const ms = this.endOf(incident) - this.startOf(incident);
+        if (!(ms >= 0)) {
             return '–';
         }
-        const totalSeconds = Math.floor(ms / 1000);
-        const hours = Math.floor(totalSeconds / 3600);
-        const minutes = Math.floor((totalSeconds % 3600) / 60);
-        const seconds = totalSeconds % 60;
-        if (hours) {
-            return `${hours} h ${minutes} min`;
-        }
-        if (minutes) {
-            return `${minutes} min ${seconds} s`;
-        }
-        return `${seconds} s`;
-    }
-
-    private ariaLabelFor(incident: ReplanningIncident, happening: boolean): string {
-        const status = happening ? 'happening' : 'ended';
-        return `Incident on ${incident.machineId}, ${status}, duration ${this.durationOf(incident)}: ${incident.message}. Show details`;
+        const seconds = Math.floor(ms / 1000);
+        const hours = Math.floor(seconds / 3600);
+        const minutes = Math.floor(seconds / 60) % 60;
+        return hours ? `${hours} h ${minutes} min` : minutes ? `${minutes} min ${seconds % 60} s` : `${seconds} s`;
     }
 }

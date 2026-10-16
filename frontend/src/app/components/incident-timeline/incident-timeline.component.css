@@ -12,12 +12,16 @@
     gap: 0.75rem;
 }
 
-.timeline-header {
+.timeline-header,
+.timeline-summary {
     display: flex;
     flex-wrap: wrap;
-    justify-content: space-between;
     align-items: center;
     gap: 0.5rem;
+}
+
+.timeline-header {
+    justify-content: space-between;
 }
 
 .timeline-header h2 {
@@ -28,15 +32,12 @@
 }
 
 .timeline-summary {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.5rem;
     font-size: 0.74rem;
     color: #475569;
 }
 
-.summary-chip {
+.chip {
+    flex-shrink: 0;
     border-radius: 9999px;
     padding: 0.15rem 0.55rem;
     background: #f1f5f9;
@@ -44,7 +45,15 @@
     color: #334155;
 }
 
-.happening-chip {
+.status-badge {
+    font-size: 0.72rem;
+    padding: 0.15rem 0.5rem;
+    color: #065f46;
+    background: #d1fae5;
+    border-color: #6ee7b7;
+}
+
+.chip.happening {
     color: #991b1b;
     background: #fee2e2;
     border-color: #fca5a5;
@@ -57,14 +66,10 @@
 }
 
 .legend-swatch {
-    display: inline-block;
     width: 0.9rem;
     height: 0.55rem;
     border-radius: 0.2rem;
     margin-left: 0.35rem;
-}
-
-.legend-swatch.ended {
     background: #64748b;
 }
 
@@ -89,19 +94,19 @@
     border-radius: 0.6rem;
 }
 
-.gridline {
+.gridline,
+.now-line {
     position: absolute;
     top: 0;
     bottom: 0;
-    width: 0;
     border-left: 1px dashed #cbd5e1;
 }
 
 .now-line {
-    position: absolute;
     top: -0.2rem;
     bottom: -0.2rem;
     right: 0;
+    border: none;
     border-right: 2px solid #0f172a;
 }
 
@@ -130,11 +135,10 @@
 
 .bar.happening {
     border-color: #b91c1c;
+    border-right-width: 0;
+    border-radius: 0.4rem 0 0 0.4rem;
     background: repeating-linear-gradient(135deg, #dc2626 0 6px, #f87171 6px 12px);
     animation: bar-pulse 1.6s ease-in-out infinite;
-    border-right-width: 0;
-    border-top-right-radius: 0;
-    border-bottom-right-radius: 0;
 }
 
 .bar.clipped-start {
@@ -249,22 +253,6 @@
     text-overflow: ellipsis;
 }
 
-.status-badge {
-    flex-shrink: 0;
-    font-size: 0.72rem;
-    color: #065f46;
-    background: #d1fae5;
-    border: 1px solid #6ee7b7;
-    border-radius: 9999px;
-    padding: 0.15rem 0.5rem;
-}
-
-.status-badge.happening {
-    color: #991b1b;
-    background: #fee2e2;
-    border-color: #fca5a5;
-}
-
 .collapse-icon {
     flex-shrink: 0;
     font-size: 1rem;
@@ -311,8 +299,7 @@
     font-style: italic;
 }
 
-.details-hint,
-.no-plan {
+.hint {
     margin: 0;
     font-size: 0.8rem;
     color: #64748b;
@@ -356,11 +343,6 @@
     color: #166534;
 }
 
-.plan-status[data-status='FAILED'] {
-    background: #fee2e2;
-    color: #991b1b;
-}
-
 .plan-steps {
     margin: 0;
     padding-left: 1.1rem;
@@ -369,7 +351,7 @@
     font-size: 0.82rem;
 }
 
-.plan-step {
+.plan-steps li {
     display: grid;
     gap: 0.1rem;
 }
@@ -379,18 +361,22 @@
     color: #111827;
 }
 
-.step-what,
-.step-detail {
+.muted {
     color: #6b7280;
     font-size: 0.76rem;
 }
 
-.plan-step[data-status='DONE'] .step-detail {
+[data-status='DONE'] .step-detail {
     color: #166534;
 }
 
-.plan-step[data-status='FAILED'] .step-detail {
+[data-status='FAILED'] .step-detail {
     color: #b91c1c;
+}
+
+.plan-status[data-status='FAILED'] {
+    background: #fee2e2;
+    color: #991b1b;
 }
 
 .plan-problem,
@@ -405,11 +391,6 @@
 }
 
 @keyframes bar-pulse {
-    0%,
-    100% {
-        opacity: 1;
-    }
-
     50% {
         opacity: 0.7;
     }
