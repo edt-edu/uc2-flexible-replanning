@@ -3,13 +3,14 @@ package mbdo.dt.services.impl;
 import mbdo.dt.models.BehavioralElementExtractor;
 import mbdo.dt.models.ConstraintExtractor;
 import mbdo.dt.models.DatabaseSchemaDeriver;
+import mbdo.dt.models.ReplanningElementExtractor;
 import mbdo.dt.models.RuntimeInterpreter;
 import mbdo.dt.models.StateMachineSelector;
 import mbdo.dt.models.StructuralDefinitionExtractor;
 import mbdo.dt.models.SysMLV2Parser;
-import mbdo.dt.services.AnomalyDetection.AnomalyEvaluationResult;
-import mbdo.dt.services.AnomalyDetection.EvaluationStatus;
-import mbdo.dt.services.AnomalyDetection.TokenRunState;
+import mbdo.dt.services.AnomalyDetectionService.AnomalyEvaluationResult;
+import mbdo.dt.services.AnomalyDetectionService.EvaluationStatus;
+import mbdo.dt.services.AnomalyDetectionService.TokenRunState;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -31,7 +32,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Several tokens on the line, each followed by its own run of the TokenLocation model from src/main/resources. */
 @SpringJUnitConfig(classes = {SysMLV2Parser.class, StructuralDefinitionExtractor.class, BehavioralElementExtractor.class,
-        ConstraintExtractor.class, DatabaseSchemaDeriver.class, StateMachineSelector.class, RuntimeInterpreter.class})
+        ConstraintExtractor.class, ReplanningElementExtractor.class, DatabaseSchemaDeriver.class,
+        StateMachineSelector.class, RuntimeInterpreter.class})
 class AnomalyDetectionMultiTokenTest {
 
     @Autowired
@@ -42,7 +44,6 @@ class AnomalyDetectionMultiTokenTest {
     private RuntimeInterpreter interpreter;
 
     private final AtomicLong clock = new AtomicLong(1_000_000L);
-    private final List<AnomalyEvaluationResult> anomalies = new ArrayList<>();
     private final Map<String, Object> values = new HashMap<>();
     private AnomalyDetectionImpl detection;
 
@@ -52,11 +53,7 @@ class AnomalyDetectionMultiTokenTest {
         for (Resource resource : new PathMatchingResourcePatternResolver().getResources("classpath*:models/**/*.sysml")) {
             models.add(parser.loadModel(resource));
         }
-        detection = new AnomalyDetectionImpl(clock::get, interpreter, selector, (request, result, latest) -> {
-            if (result.anomalyContext() != null) {
-                anomalies.add(result);
-            }
-        }, "TokenLocation");
+        detection = new AnomalyDetectionImpl(clock::get, interpreter, selector, "TokenLocation");
         detection.activateModels(models);
 
         // light barriers are active-low: nothing in front of them
@@ -175,7 +172,7 @@ class AnomalyDetectionMultiTokenTest {
         assertEquals(EvaluationStatus.ANOMALY_DETECTED, result.status());
         assertEquals("ConveyorBeltFeedDepartureLimit", result.transitionName());
         assertTrue(result.message().startsWith("Token #1: "), result.message());
-        assertEquals(1, anomalies.size());
+        assertEquals(List.of(result), detection.detectDisruptions(), "the anomaly of the first token only");
         assertTrue(detection.getTokens().get(0).anomaly());
         assertFalse(detection.getTokens().get(1).anomaly());
 

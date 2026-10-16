@@ -12,8 +12,7 @@ import mbdo.dt.models.SysMLBehavioralModel.Transition;
 import mbdo.dt.models.SysMLStructuralModel;
 import mbdo.dt.models.SysMLStructuralModel.ConstraintUsage;
 import mbdo.dt.models.SysMLV2Parser;
-import mbdo.dt.services.AnomalyDetection;
-import mbdo.dt.services.AnomalyReactionService;
+import mbdo.dt.services.AnomalyDetectionService;
 import mbdo.dt.utils.RuntimeInterpreterUtils;
 import mbdo.dt.utils.StateMachineInferenceUtils;
 import org.slf4j.Logger;
@@ -45,7 +44,7 @@ import java.util.function.LongSupplier;
  * other tokens are still followed, and new tokens still enter the line.
  */
 @Service
-public class AnomalyDetectionImpl implements AnomalyDetection {
+public class AnomalyDetectionImpl implements AnomalyDetectionService {
 
     private static final Logger logger = LoggerFactory.getLogger(AnomalyDetectionImpl.class);
 
@@ -61,7 +60,6 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
     private String activeStateMachineId;
     private final RuntimeInterpreter runtimeInterpreter;
     private final StateMachineSelector stateMachineSelector;
-    private final AnomalyReactionService anomalyReactionService;
     private final String primaryStateMachineName;
 
     /** The runs of the state machine, the oldest token first; the run waiting for the next token is the last one. */
@@ -70,6 +68,9 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
 
     /** The run of each anomaly, until the operator dealt with it ({@link #releaseAnomaly}). */
     private final Map<String, TokenRun> anomalyRuns = new HashMap<>();
+
+    /** The anomalies detected and not handed out yet ({@link #detectDisruptions}), in the order of detection. */
+    private final List<AnomalyEvaluationResult> disruptions = new ArrayList<>();
 
     /** The run being evaluated (every evaluation holds the lock of this service). */
     private TokenRun run;
@@ -93,22 +94,18 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
     public AnomalyDetectionImpl(
             RuntimeInterpreter runtimeInterpreter,
             StateMachineSelector stateMachineSelector,
-            AnomalyReactionService anomalyReactionService,
             @Value("${anomaly-detection.primary-state-machine:TokenLocation}") String primaryStateMachineName) {
-        this(System::currentTimeMillis, runtimeInterpreter, stateMachineSelector, anomalyReactionService,
-                primaryStateMachineName);
+        this(System::currentTimeMillis, runtimeInterpreter, stateMachineSelector, primaryStateMachineName);
     }
 
     AnomalyDetectionImpl(
             LongSupplier clockMillis,
             RuntimeInterpreter runtimeInterpreter,
             StateMachineSelector stateMachineSelector,
-            AnomalyReactionService anomalyReactionService,
             String primaryStateMachineName) {
         this.clockMillis = clockMillis;
         this.runtimeInterpreter = runtimeInterpreter;
         this.stateMachineSelector = stateMachineSelector;
-        this.anomalyReactionService = anomalyReactionService;
         this.primaryStateMachineName = primaryStateMachineName;
     }
 
@@ -143,6 +140,7 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
     public synchronized void reset() {
         runs.clear();
         anomalyRuns.clear();
+        disruptions.clear();
         nextTokenNumber = 1;
 
         if (activeStateMachine == null) {
@@ -223,7 +221,7 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
         }
         run = null;
 
-        return react(triggeringRequest, results, safeObservedValues);
+        return summarize(results);
     }
 
     private void logGuards(DataRequest triggeringRequest, String stateBeforeEvaluation,
@@ -272,11 +270,10 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
     }
 
     /**
-     * Hands every anomaly to the reaction (one per token), and returns the first anomaly, else the last transition
-     * fired, else the waiting result of the most recent token.
+     * Keeps every anomaly (one per token) for {@link #detectDisruptions}, and returns the first anomaly, else the last
+     * transition fired, else the waiting result of the most recent token.
      */
-    private AnomalyEvaluationResult react(DataRequest triggeringRequest, List<AnomalyEvaluationResult> results,
-            Map<String, Object> observedValues) {
+    private AnomalyEvaluationResult summarize(List<AnomalyEvaluationResult> results) {
         List<AnomalyEvaluationResult> anomalies = results.stream().filter(r -> r.anomalyContext() != null).toList();
         AnomalyEvaluationResult summary;
         if (!anomalies.isEmpty()) {
@@ -288,13 +285,15 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
                     .orElseGet(() -> results.isEmpty() ? idleResult() : mostRecent(results));
         }
 
-        if (anomalies.isEmpty()) {
-            anomalyReactionService.handleDetectedAnomaly(triggeringRequest, summary, observedValues);
-        } else {
-            anomalies.forEach(anomaly ->
-                    anomalyReactionService.handleDetectedAnomaly(triggeringRequest, anomaly, observedValues));
-        }
+        disruptions.addAll(anomalies);
         return summary;
+    }
+
+    @Override
+    public synchronized List<AnomalyEvaluationResult> detectDisruptions() {
+        List<AnomalyEvaluationResult> detected = List.copyOf(disruptions);
+        disruptions.clear();
+        return detected;
     }
 
     /** The result of the most recent token: the last one before the waiting run's, if any. */
@@ -369,7 +368,7 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
         }
         run = null;
 
-        return react(null, results, Collections.emptyMap());
+        return summarize(results);
     }
 
     @Override

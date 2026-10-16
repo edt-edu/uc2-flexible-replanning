@@ -1,6 +1,6 @@
 package mbdo.dt.telemetry;
 
-import mbdo.dt.services.AnomalyDetection;
+import mbdo.dt.services.AnomalyDetectionService;
 import mbdo.dt.services.RuntimeContext;
 import mbdo.dt.telemetry.dto.TokenLocationResponse;
 import mbdo.dt.utils.RuntimeInterpreterUtils;
@@ -71,7 +71,7 @@ public class TokenLocationInferenceService {
     /** The state in which a new token enters the line: the color of the previous token no longer applies. */
     private static final String TOKEN_ENTRY_STATE = "TokenAtSortingLineInput";
 
-    private final AnomalyDetection anomalyDetection;
+    private final AnomalyDetectionService anomalyDetection;
     private final RuntimeContext runtimeContext;
     private final MachineTelemetrySseService sseService;
 
@@ -80,7 +80,7 @@ public class TokenLocationInferenceService {
 
     private volatile TokenLocationResponse lastBroadcast;
 
-    public TokenLocationInferenceService(AnomalyDetection anomalyDetection, RuntimeContext runtimeContext,
+    public TokenLocationInferenceService(AnomalyDetectionService anomalyDetection, RuntimeContext runtimeContext,
             MachineTelemetrySseService sseService) {
         this.anomalyDetection = anomalyDetection;
         this.runtimeContext = runtimeContext;
@@ -88,12 +88,12 @@ public class TokenLocationInferenceService {
     }
 
     public synchronized TokenLocationResponse currentTokenLocation() {
-        List<AnomalyDetection.TokenRunState> runs = anomalyDetection.getTokens();
+        List<AnomalyDetectionService.TokenRunState> runs = anomalyDetection.getTokens();
         Map<String, Object> observedValues = runtimeContext.snapshot();
 
         // resolved incidents: their token's run ended, forget it
         Set<String> openAnomalies = runs.stream()
-                .map(AnomalyDetection.TokenRunState::anomalyId)
+                .map(AnomalyDetectionService.TokenRunState::anomalyId)
                 .filter(Objects::nonNull)
                 .collect(Collectors.toSet());
         anomaliesWithTokenGone.retainAll(openAnomalies);
@@ -130,7 +130,7 @@ public class TokenLocationInferenceService {
     }
 
     /** Whether the token is still seen at its location; once a token with an anomaly is gone, it stays gone. */
-    private boolean present(AnomalyDetection.TokenRunState token, String location, Map<String, Object> observedValues) {
+    private boolean present(AnomalyDetectionService.TokenRunState token, String location, Map<String, Object> observedValues) {
         String anomalyId = token.anomalyId();
         if (anomalyId != null && anomaliesWithTokenGone.contains(anomalyId)) {
             return false;

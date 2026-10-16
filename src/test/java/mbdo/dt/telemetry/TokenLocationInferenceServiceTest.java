@@ -1,7 +1,7 @@
 package mbdo.dt.telemetry;
 
-import mbdo.dt.services.AnomalyDetection;
-import mbdo.dt.services.AnomalyDetection.TokenRunState;
+import mbdo.dt.services.AnomalyDetectionService;
+import mbdo.dt.services.AnomalyDetectionService.TokenRunState;
 import mbdo.dt.services.RuntimeContext;
 import mbdo.dt.telemetry.dto.TokenLocationResponse;
 import org.junit.jupiter.api.BeforeEach;
@@ -24,13 +24,13 @@ class TokenLocationInferenceServiceTest {
             "TokenAtSortingLineInput", "TokenAtSortingLineBlueOutput", "TokenPickedUpByVGR1",
             "TokenDroppedOffAtConveyorBeltFeed");
 
-    private AnomalyDetection anomalyDetection;
+    private AnomalyDetectionService anomalyDetection;
     private final Map<String, Object> observedValues = new HashMap<>();
     private TokenLocationInferenceService service;
 
     @BeforeEach
     void setUp() {
-        anomalyDetection = mock(AnomalyDetection.class);
+        anomalyDetection = mock(AnomalyDetectionService.class);
         RuntimeContext runtimeContext = mock(RuntimeContext.class);
         when(runtimeContext.snapshot()).thenAnswer(invocation -> Map.copyOf(observedValues));
         service = new TokenLocationInferenceService(anomalyDetection, runtimeContext,

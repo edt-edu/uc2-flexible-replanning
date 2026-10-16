@@ -18,10 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.argThat;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -88,22 +85,6 @@ class ReplanningIncidentJournalTest {
 
         assertEquals(List.of("feed departure limit live", "feed departure limit old"),
                 registry.getHistory().stream().map(ReplanningIncidentResponse::getMessage).toList());
-    }
-
-    @Test
-    void theReplanningIsAddedToTheAnomalyRecordAndTheRecoveryToTheRecoveryRecord() {
-        ReplanningIncidentResponse incident = registry.openIncident(anomaly("a-1", T0));
-        ReplanningPlan replanning = plan("cbFailure", Status.EXECUTED);
-        ReplanningPlan recovery = plan("cbRepaired", Status.EXECUTED);
-
-        journal.recordReplanning("a-1", ReplanningIncidentJournal.REPLANNING, replanning);
-        registry.resolveCurrentIncident(incident.getId(), "belt repaired", T0.plusSeconds(120));
-        journal.recordReplanning("a-1", ReplanningIncidentJournal.RECOVERY, recovery);
-
-        verify(digitalShadow).recordAnomaly(argThat(a -> a.anomalyId().equals("a-1")
-                && a.detectionTimestamp().equals(T0) && a.replanningPlan() == replanning));
-        verify(digitalShadow).recordRecovery(argThat(a -> a.recoveryPlan() == recovery), eq("belt repaired"),
-                eq(T0.plusSeconds(120)));
     }
 
     @Test

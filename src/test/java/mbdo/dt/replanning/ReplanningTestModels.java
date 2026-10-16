@@ -1,8 +1,21 @@
 package mbdo.dt.replanning;
 
+import mbdo.dt.models.BehavioralElementExtractor;
+import mbdo.dt.models.ConstraintExtractor;
+import mbdo.dt.models.DatabaseSchemaDeriver;
+import mbdo.dt.models.ReplanningElementExtractor;
+import mbdo.dt.models.StructuralDefinitionExtractor;
+import mbdo.dt.models.SysMLReplanningModel;
+import mbdo.dt.models.SysMLV2Parser;
+import mbdo.dt.models.SysMLV2Parser.ParsedSysMLModel;
 import mbdo.dt.replanning.scada.ScadaMachine;
 import mbdo.dt.replanning.scada.ScadaMachine.ScadaMission;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.util.ArrayList;
 import java.util.List;
 
 /** The replanning model of src/main/resources, and SCADA machines as the SCADA of the REN missions reports them. */
@@ -27,8 +40,23 @@ public final class ReplanningTestModels {
     private ReplanningTestModels() {
     }
 
-    public static ReplanningModel load() {
-        return ReplanningModel.load("classpath*:models/**/*.sysml");
+    /** The models of src/main/resources, parsed as the digital twin parses them. */
+    public static List<ParsedSysMLModel> parsedModels() {
+        SysMLV2Parser parser = new SysMLV2Parser(new DatabaseSchemaDeriver(), new StructuralDefinitionExtractor(),
+                new ConstraintExtractor(), new BehavioralElementExtractor(), new ReplanningElementExtractor());
+        List<ParsedSysMLModel> models = new ArrayList<>();
+        try {
+            for (Resource resource : new PathMatchingResourcePatternResolver().getResources("classpath*:models/**/*.sysml")) {
+                models.add(parser.loadModel(resource));
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        return models;
+    }
+
+    public static SysMLReplanningModel load() {
+        return SysMLReplanningModel.merge(parsedModels().stream().map(ParsedSysMLModel::replanningModel).toList());
     }
 
     public static ScadaMachine cb(String mission, String state) {

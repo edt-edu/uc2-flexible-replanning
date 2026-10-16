@@ -24,8 +24,9 @@ import java.util.List;
  * Entry point for parsing a SysML v2 model file into {@link ParsedSysMLModel}. Cleans the raw
  * text, then orchestrates the structural and behavioral extractors that do the actual parsing:
  * {@link StructuralDefinitionExtractor} and {@link ConstraintExtractor} for the structural
- * model, {@link BehavioralElementExtractor} for each state machine's behavioral model, and
- * {@link DatabaseSchemaDeriver} to derive the InfluxDB schema from the parsed structure.
+ * model, {@link BehavioralElementExtractor} for each state machine's behavioral model,
+ * {@link ReplanningElementExtractor} for the replanning model, and {@link DatabaseSchemaDeriver}
+ * to derive the InfluxDB schema from the parsed structure.
  */
 @Component
 public class SysMLV2Parser {
@@ -34,18 +35,21 @@ public class SysMLV2Parser {
     private final StructuralDefinitionExtractor structuralDefinitionExtractor;
     private final ConstraintExtractor constraintExtractor;
     private final BehavioralElementExtractor behavioralElementExtractor;
+    private final ReplanningElementExtractor replanningElementExtractor;
 
     @Autowired
     public SysMLV2Parser(
             DatabaseSchemaDeriver databaseSchemaDeriver,
             StructuralDefinitionExtractor structuralDefinitionExtractor,
             ConstraintExtractor constraintExtractor,
-            BehavioralElementExtractor behavioralElementExtractor
+            BehavioralElementExtractor behavioralElementExtractor,
+            ReplanningElementExtractor replanningElementExtractor
     ) {
         this.databaseSchemaDeriver = databaseSchemaDeriver;
         this.structuralDefinitionExtractor = structuralDefinitionExtractor;
         this.constraintExtractor = constraintExtractor;
         this.behavioralElementExtractor = behavioralElementExtractor;
+        this.replanningElementExtractor = replanningElementExtractor;
     }
 
     public ParsedSysMLModel loadModel(Resource resource) {
@@ -61,6 +65,8 @@ public class SysMLV2Parser {
         try {
             String content = resource.getContentAsString(StandardCharsets.UTF_8);
             return parse(content);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException(resource.getDescription() + ": " + e.getMessage(), e);
         } catch (IOException e) {
             throw new IllegalStateException("failed to read SysML model resource: " + resource.getDescription(), e);
         }
@@ -71,8 +77,9 @@ public class SysMLV2Parser {
 
         SysMLStructuralModel structuralModel = parseStructuralModel(cleanedContent);
         SysMLBehavioralModel behavioralModel = parseBehavioralModel(cleanedContent);
+        SysMLReplanningModel replanningModel = parseReplanningModel(cleanedContent);
 
-        return new ParsedSysMLModel(structuralModel, behavioralModel);
+        return new ParsedSysMLModel(structuralModel, behavioralModel, replanningModel);
     }
 
     private SysMLStructuralModel parseStructuralModel(String content) {
@@ -117,9 +124,18 @@ public class SysMLV2Parser {
         return new SysMLBehavioralModel(stateMachines);
     }
 
+    /**
+     * The replanning view of the model: neither structure nor behavior of the monitored system, but the reactions to
+     * its anomalies (strategies, and the mission migrations and machine stops they apply to SCADA machines).
+     */
+    private SysMLReplanningModel parseReplanningModel(String content) {
+        return replanningElementExtractor.extract(content);
+    }
+
     public record ParsedSysMLModel(
             SysMLStructuralModel structuralModel,
-            SysMLBehavioralModel behavioralModel
+            SysMLBehavioralModel behavioralModel,
+            SysMLReplanningModel replanningModel
     ) {
     }
 }

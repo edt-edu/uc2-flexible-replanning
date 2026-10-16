@@ -1,9 +1,6 @@
 package mbdo.dt.incident;
 
-import mbdo.dt.data.DigitalShadow;
-import mbdo.dt.domain.AnomalyContext;
-import mbdo.dt.services.AnomalyDetection;
-import mbdo.dt.services.ReplanningService;
+import mbdo.dt.orchestrator.DtEngine;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -14,9 +11,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import java.time.Instant;
 import java.util.List;
-import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/replanning-incidents")
@@ -24,22 +19,16 @@ public class ReplanningIncidentController {
 
     private final ReplanningIncidentRegistryService registryService;
     private final ReplanningIncidentSseService sseService;
-    private final DigitalShadow digitalShadow;
-    private final AnomalyDetection anomalyDetection;
-    private final ReplanningService replanningService;
+    private final DtEngine dtEngine;
 
     public ReplanningIncidentController(
             ReplanningIncidentRegistryService registryService,
             ReplanningIncidentSseService sseService,
-            DigitalShadow digitalShadow,
-            AnomalyDetection anomalyDetection,
-            ReplanningService replanningService
+            DtEngine dtEngine
     ) {
         this.registryService = registryService;
         this.sseService = sseService;
-        this.digitalShadow = digitalShadow;
-        this.anomalyDetection = anomalyDetection;
-        this.replanningService = replanningService;
+        this.dtEngine = dtEngine;
     }
 
     @GetMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -65,25 +54,10 @@ public class ReplanningIncidentController {
             @RequestBody ResolveIncidentRequest request
     ) {
         String comment = request == null ? null : request.getComment();
-        // the same time for the record and the incident: the recovery is added to the record at that time
-        Instant resolvedAt = Instant.now();
 
-        registryService.getOriginatingContext(id)
-                .ifPresent(context -> digitalShadow.recordRecovery(context, comment, resolvedAt));
-
-        Optional<AnomalyContext> context = registryService.getOriginatingContext(id);
-
-        return registryService.resolveCurrentIncident(id, comment, resolvedAt)
-                .map(resolved -> {
-                    // the operator dealt with the anomaly: its token is no longer followed, the others are, and the
-                    // machines go back to their nominal missions
-                    context.ifPresent(c -> {
-                        anomalyDetection.releaseAnomaly(c.anomalyId());
-                        replanningService.recover(c.anomalyId());
-                    });
-                    sseService.broadcastResolved(resolved);
-                    return ResponseEntity.ok(resolved);
-                })
+        return registryService.getOriginatingContext(id)
+                .flatMap(context -> dtEngine.resolveDisruption(context, comment))
+                .map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
 }

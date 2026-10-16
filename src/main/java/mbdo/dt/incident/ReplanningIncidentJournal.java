@@ -4,7 +4,6 @@ import mbdo.dt.data.DigitalShadow;
 import mbdo.dt.data.DigitalShadow.IncidentRecord;
 import mbdo.dt.domain.AnomalyContext;
 import mbdo.dt.incident.ReplanningIncidentRegistryService.RestoredIncident;
-import mbdo.dt.replanning.ReplanningPlan;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -25,8 +24,6 @@ import java.util.List;
 public class ReplanningIncidentJournal {
 
     private static final Logger logger = LoggerFactory.getLogger(ReplanningIncidentJournal.class);
-    public static final String REPLANNING = "replanning";
-    public static final String RECOVERY = "recovery";
 
     private final DigitalShadow digitalShadow;
     private final ReplanningIncidentRegistryService registry;
@@ -55,20 +52,17 @@ public class ReplanningIncidentJournal {
         logger.info("Restored {} past incidents from the journal (last {}).", records.size(), lookback);
     }
 
+    /** Journals the anomaly, with its replanning plan if any: written again, at the same time, InfluxDB merges it. */
+    public void recordAnomaly(AnomalyContext anomaly) {
+        digitalShadow.recordAnomaly(anomaly);
+    }
+
     /**
-     * Journals the replanning of an anomaly ({@code kind} {@link #REPLANNING}) in its anomaly record, or its recovery
-     * ({@link #RECOVERY}) in its recovery record, as it ended: the record is written again, at the same time.
+     * Journals the operator's correction of the anomaly, at the time its incident was resolved, with its recovery plan
+     * if any.
      */
-    public void recordReplanning(String anomalyId, String kind, ReplanningPlan plan) {
-        registry.findByAnomaly(anomalyId).ifPresentOrElse(incident -> {
-            AnomalyContext anomaly = registry.getOriginatingContext(incident.getId()).orElseThrow();
-            if (REPLANNING.equals(kind)) {
-                digitalShadow.recordAnomaly(anomaly.withReplanningPlan(plan));
-            } else if (incident.getResolvedAt() != null) {
-                digitalShadow.recordRecovery(anomaly.withRecoveryPlan(plan), incident.getOperatorComment(),
-                        incident.getResolvedAt());
-            }
-        }, () -> logger.warn("No incident for anomaly '{}': its {} isn't journaled", anomalyId, kind));
+    public void recordRecovery(AnomalyContext anomaly, String comment, Instant resolvedAt) {
+        digitalShadow.recordRecovery(anomaly, comment, resolvedAt);
     }
 
     /** An anomaly never repaired (the digital twin stopped meanwhile) ends with its detection. */

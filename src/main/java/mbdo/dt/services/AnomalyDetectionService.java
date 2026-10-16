@@ -7,7 +7,7 @@ import mbdo.dt.models.SysMLV2Parser;
 import java.util.List;
 import java.util.Map;
 
-public interface AnomalyDetection {
+public interface AnomalyDetectionService {
 
     void activateModels(List<SysMLV2Parser.ParsedSysMLModel> parsedModels);
 
@@ -18,7 +18,14 @@ public interface AnomalyDetection {
             Map<String, Object> observedValues
     );
 
+    /** Evaluates the time-based transitions (a state overrunning its time limit), without a new observation. */
     AnomalyEvaluationResult checkTimeTransitions();
+
+    /**
+     * The anomalies detected since the last call (one per token), by observations or time-based checks, in the order of
+     * detection. Each anomaly is handed out once.
+     */
+    List<AnomalyEvaluationResult> detectDisruptions();
 
     void reset();
 

@@ -6,9 +6,14 @@ import mbdo.dt.connectivity.GatewayServiceConfiguration.DtEvent;
 import mbdo.dt.connectivity.GatewayServiceConfiguration.DtEventGroup;
 import mbdo.dt.connectivity.GatewayServiceConfiguration.MqttInfluxDbRecording;
 import mbdo.dt.data.DigitalShadow;
+import mbdo.dt.domain.AnomalyContext;
 import mbdo.dt.domain.DataRequest;
+import mbdo.dt.incident.ReplanningIncidentResponse;
 import mbdo.dt.models.SysMLV2Parser;
-import mbdo.dt.services.AnomalyDetection;
+import mbdo.dt.services.AnomalyDetectionService;
+import mbdo.dt.services.AnomalyDetectionService.AnomalyEvaluationResult;
+import mbdo.dt.services.NotificationService;
+import mbdo.dt.services.ReplanningService;
 import mbdo.dt.services.RuntimeContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,6 +31,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 @Service
 public class DtEngine {
@@ -33,7 +39,9 @@ public class DtEngine {
     private static final Logger logger = LoggerFactory.getLogger(DtEngine.class);
 
     private final GatewayService gatewayService;
-    private final AnomalyDetection anomalyDetectionService;
+    private final AnomalyDetectionService anomalyDetectionService;
+    private final ReplanningService replanningService;
+    private final NotificationService notificationService;
     private final DigitalShadow digitalShadow;
     private final SysMLV2Parser sysMLV2Parser;
     private final RuntimeContext runtimeContextService;
@@ -48,7 +56,9 @@ public class DtEngine {
     public DtEngine(
             GatewayService gatewayService,
             DigitalShadow digitalShadow,
-            AnomalyDetection anomalyDetectionService,
+            AnomalyDetectionService anomalyDetectionService,
+            ReplanningService replanningService,
+            NotificationService notificationService,
             SysMLV2Parser sysMLV2Parser,
             ResourceLoader resourceLoader,
             RuntimeContext runtimeContextService
@@ -56,6 +66,8 @@ public class DtEngine {
         this.gatewayService = gatewayService;
         this.digitalShadow = digitalShadow;
         this.anomalyDetectionService = anomalyDetectionService;
+        this.replanningService = replanningService;
+        this.notificationService = notificationService;
         this.sysMLV2Parser = sysMLV2Parser;
         this.runtimeContextService = runtimeContextService;
         this.resourcePatternResolver = new PathMatchingResourcePatternResolver(resourceLoader);
@@ -94,23 +106,64 @@ public class DtEngine {
         );
 
         try {
-            runtimeContextService.onDataRequest(request);
+            Map<String, Object> snapshot = synchronizeRuntimeState(request);
 
-            Map<String, Object> snapshot = runtimeContextService.snapshot();
-
-            AnomalyDetection.AnomalyEvaluationResult result =
-                    anomalyDetectionService.evaluateObservation(request, snapshot);
+            AnomalyEvaluationResult result = anomalyDetectionService.evaluateObservation(request, snapshot);
 
             runtimeContextService.updateResolvedRuntimeState(
                     result.activeStateMachineId(),
                     result.activeStateMachineName(),
                     result.currentState()
             );
+            reactToDisruptions(snapshot);
         } catch (RuntimeException e) {
             logger.error("failed to process DataRequest for topic '{}': {}",
                     request.topic(), e.getMessage(), e);
         }
     }
+
+    /** Applies the observation to the runtime context, and returns the latest observed values. */
+    private Map<String, Object> synchronizeRuntimeState(DataRequest request) {
+        runtimeContextService.onDataRequest(request);
+        return runtimeContextService.snapshot();
+    }
+
+    /**
+     * Evaluates the time-based transitions without a new observation (a state overrunning its time limit), and reacts
+     * to the anomalies detected (see {@link AnomalyTimeoutScheduler}).
+     */
+    public void checkTimeTransitions() {
+        anomalyDetectionService.checkTimeTransitions();
+        reactToDisruptions(runtimeContextService.snapshot());
+    }
+
+    /** Opens the incident of each anomaly detected, then replans: the replanning shows its plan in that incident. */
+    private void reactToDisruptions(Map<String, Object> observedValues) {
+        for (AnomalyEvaluationResult disruption : anomalyDetectionService.detectDisruptions()) {
+            AnomalyContext context = disruption.anomalyContext();
+            try {
+                notificationService.notifyDisruption(context);
+            } catch (RuntimeException e) {
+                logger.warn("Failed to notify anomaly '{}': {}", context.anomalyId(), e.getMessage());
+            }
+            replanningService.handleDisruption(disruption, observedValues);
+        }
+    }
+
+    /**
+     * The operator corrected the disruption: closes its incident, then its token is no longer followed (the others
+     * are), and the machines go back to their nominal missions.
+     *
+     * @return the closed incident, or empty if the incident of {@code context} is not open
+     */
+    public Optional<ReplanningIncidentResponse> resolveDisruption(AnomalyContext context, String comment) {
+        return notificationService.closeDisruption(context, comment).map(resolved -> {
+            anomalyDetectionService.releaseAnomaly(context.anomalyId());
+            replanningService.recover(context.anomalyId());
+            return resolved;
+        });
+    }
+
     private void initializeRuntimeServices() {
         logger.info("Initializing runtime services.");
 
@@ -132,6 +185,8 @@ public class DtEngine {
                 return;
             }
 
+            // before the anomaly detection: an anomaly is replanned as soon as it is detected
+            replanningService.activateModels(parsedModels);
             anomalyDetectionService.activateModels(parsedModels);
 
             logger.info("Runtime services initialized with {} SysML model(s).",

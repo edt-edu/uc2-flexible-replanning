@@ -1,10 +1,12 @@
-package mbdo.dt.replanning;
+package mbdo.dt.models;
 
 import mbdo.dt.models.SysMLBehavioralModel.Operator;
-import mbdo.dt.replanning.ReplanningModel.MachineStop;
-import mbdo.dt.replanning.ReplanningModel.Migration;
-import mbdo.dt.replanning.ReplanningModel.Rule;
-import mbdo.dt.replanning.ReplanningModel.Strategy;
+import mbdo.dt.models.SysMLReplanningModel.MachineStop;
+import mbdo.dt.models.SysMLReplanningModel.Migration;
+import mbdo.dt.models.SysMLReplanningModel.Rule;
+import mbdo.dt.models.SysMLReplanningModel.Strategy;
+import mbdo.dt.replanning.ReplanningTestModels;
+import mbdo.dt.utils.SysMLParserUtils;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -16,9 +18,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** The replanning strategies and mission migrations, as written in models/Replanning. */
-class ReplanningModelTest {
+class SysMLReplanningModelTest {
 
-    private final ReplanningModel model = ReplanningTestModels.load();
+    private final SysMLReplanningModel model = ReplanningTestModels.load();
 
     @Test
     void theConveyorBeltFailureStrategyIsTriggeredByTheFeedDepartureLimit() {
@@ -100,6 +102,6 @@ class ReplanningModelTest {
                 }
                 """;
 
-        assertThrows(IllegalArgumentException.class, () -> ReplanningModel.parse(sysml));
+        assertThrows(IllegalArgumentException.class, () -> new ReplanningElementExtractor().extract(SysMLParserUtils.cleanContent(sysml)));
     }
 }

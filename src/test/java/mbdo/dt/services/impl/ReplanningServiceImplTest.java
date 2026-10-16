@@ -1,11 +1,7 @@
 package mbdo.dt.services.impl;
 
 import mbdo.dt.domain.AnomalyContext;
-import mbdo.dt.incident.ReplanningIncidentJournal;
-import mbdo.dt.incident.ReplanningIncidentRegistryService;
-import mbdo.dt.incident.ReplanningIncidentResponse;
-import mbdo.dt.incident.ReplanningIncidentSseService;
-import mbdo.dt.replanning.ReplanningModel;
+import mbdo.dt.models.SysMLReplanningModel;
 import mbdo.dt.replanning.ReplanningPlan;
 import mbdo.dt.replanning.ReplanningPlan.Kind;
 import mbdo.dt.replanning.ReplanningPlan.Status;
@@ -17,8 +13,9 @@ import mbdo.dt.replanning.scada.ScadaConflictException;
 import mbdo.dt.replanning.scada.ScadaMachine;
 import mbdo.dt.replanning.ReplanningTestModels;
 import mbdo.dt.replanning.scada.ScadaMissionChange;
-import mbdo.dt.services.AnomalyDetection.AnomalyEvaluationResult;
-import mbdo.dt.services.AnomalyDetection.EvaluationStatus;
+import mbdo.dt.services.AnomalyDetectionService.AnomalyEvaluationResult;
+import mbdo.dt.services.AnomalyDetectionService.EvaluationStatus;
+import mbdo.dt.services.NotificationService;
 import mbdo.dt.services.RuntimeContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -29,7 +26,6 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.stream.Collectors;
 
 import static mbdo.dt.replanning.ReplanningTestModels.CB;
@@ -43,9 +39,8 @@ import static mbdo.dt.replanning.ReplanningTestModels.zoneCB;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
@@ -118,11 +113,11 @@ class ReplanningServiceImplTest {
         }
     }
 
-    private final ReplanningModel model = ReplanningTestModels.load();
-    private final ReplanningModel.Strategy cbFailure = model.findStrategy("cbFailure").orElseThrow();
+    private final SysMLReplanningModel model = ReplanningTestModels.load();
+    private final SysMLReplanningModel.Strategy cbFailure = model.findStrategy("cbFailure").orElseThrow();
     private final Map<String, Object> values = new HashMap<>();
     private final List<ReplanningPlan> published = new ArrayList<>();
-    private final ReplanningIncidentJournal journal = mock(ReplanningIncidentJournal.class);
+    private final NotificationService notifications = mock(NotificationService.class);
     private FakeScada scada;
     private ReplanningServiceImpl service;
 
@@ -135,19 +130,17 @@ class ReplanningServiceImplTest {
         scada.machines.put(VGR2, vgr2("VacuumGripper2NominalMission", "Idle"));
         tokenStuckOnTheFeed();
 
-        ReplanningIncidentRegistryService incidents = mock(ReplanningIncidentRegistryService.class);
-        when(incidents.attachPlan(eq(ANOMALY), any())).thenAnswer(call -> {
-            synchronized (published) {
-                published.add(call.getArgument(1));
-            }
-            return Optional.of(mock(ReplanningIncidentResponse.class));
-        });
+        when(notifications.notifyDisruption(argThat(anomaly -> anomaly != null && ANOMALY.equals(anomaly.anomalyId()))))
+                .thenAnswer(call -> {
+                    synchronized (published) {
+                        published.add(call.<AnomalyContext>getArgument(0).replanningPlan());
+                    }
+                    return true;
+                });
         RuntimeContext runtimeContext = mock(RuntimeContext.class);
         when(runtimeContext.snapshot()).thenAnswer(call -> new HashMap<>(values));
-        service = new ReplanningServiceImpl(scada, incidents, mock(ReplanningIncidentSseService.class), journal,
-                runtimeContext,
-                "classpath*:models/**/*.sysml", 20, 2000, 1000);
-        service.loadModel();
+        service = new ReplanningServiceImpl(scada, notifications, runtimeContext, 20, 2000, 1000);
+        service.activateModels(ReplanningTestModels.parsedModels());
     }
 
     // ---- planning ----
@@ -300,7 +293,7 @@ class ReplanningServiceImplTest {
         ReplanningPlan executed = replanned();
 
         assertEquals(Status.EXECUTED, executed.status(), executed.message());
-        verify(journal, timeout(2000)).recordReplanning(ANOMALY, ReplanningIncidentJournal.REPLANNING, executed);
+        verify(notifications, timeout(2000)).notifyDisruption(argThat(anomaly -> anomaly.replanningPlan() == executed));
         assertEquals(List.of(
                 "stop " + CB,
                 "command " + CB + " stop",
@@ -419,13 +412,13 @@ class ReplanningServiceImplTest {
             sleep(10);
         }
         assertEquals(expected, scada.requests);
-        verify(journal, timeout(2000)).recordReplanning(eq(ANOMALY), eq(ReplanningIncidentJournal.RECOVERY),
-                argThat(plan -> plan.status() == Status.EXECUTED));
+        verify(notifications, timeout(2000)).closeDisruption(argThat(anomaly -> anomaly.anomalyId().equals(ANOMALY)
+                && anomaly.recoveryPlan() != null && anomaly.recoveryPlan().status() == Status.EXECUTED), isNull());
     }
 
     @Test
     void theRecoveryWaitsForTheGrippersToLeaveTheBeltButNotForTheTokensOnIt() {
-        ReplanningModel.Strategy cbRepaired = model.findStrategy(cbFailure.recoveryStrategy()).orElseThrow();
+        SysMLReplanningModel.Strategy cbRepaired = model.findStrategy(cbFailure.recoveryStrategy()).orElseThrow();
         scada.machines.put(CB, cb(null, null));
         scada.machines.put(ZONE_CB, zoneCB("ZoneMissionDeadCB", "VGR1PlacingOnSwapAfterFeed"));
         scada.machines.put(VGR1, vgr1("VacuumGripper1CBFailureMission", "PlaceConveyorBeltCMD"));
@@ -468,7 +461,7 @@ class ReplanningServiceImplTest {
         String state = (String) values.get(ReplanningServiceImpl.TOKEN_LOCATION_STATE);
         AnomalyContext context = new AnomalyContext(ANOMALY, Instant.now(), "TokenLocation", state, "cb", state,
                 state, "Token #1: " + constraint);
-        service.handleAnomaly(null, new AnomalyEvaluationResult(EvaluationStatus.ANOMALY_DETECTED, "TokenLocation",
+        service.handleDisruption(new AnomalyEvaluationResult(EvaluationStatus.ANOMALY_DETECTED, "TokenLocation",
                 "TokenLocation", state, state, constraint, constraint, context), new HashMap<>(values));
         long deadline = System.currentTimeMillis() + 3000;
         while (System.currentTimeMillis() < deadline) {

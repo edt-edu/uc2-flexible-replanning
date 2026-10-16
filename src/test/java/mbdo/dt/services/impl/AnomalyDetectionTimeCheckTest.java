@@ -3,6 +3,7 @@ package mbdo.dt.services.impl;
 import mbdo.dt.models.BehavioralElementExtractor;
 import mbdo.dt.models.ConstraintExtractor;
 import mbdo.dt.models.DatabaseSchemaDeriver;
+import mbdo.dt.models.ReplanningElementExtractor;
 import mbdo.dt.models.RuntimeInterpreter;
 import mbdo.dt.models.RuntimeInterpreter.FoundValue;
 import mbdo.dt.models.RuntimeInterpreter.GuardClauseEvaluation;
@@ -11,8 +12,8 @@ import mbdo.dt.models.RuntimeInterpreter.GuardTransitionEvaluation;
 import mbdo.dt.models.StateMachineSelector;
 import mbdo.dt.models.StructuralDefinitionExtractor;
 import mbdo.dt.models.SysMLV2Parser;
-import mbdo.dt.services.AnomalyDetection.AnomalyEvaluationResult;
-import mbdo.dt.services.AnomalyDetection.EvaluationStatus;
+import mbdo.dt.services.AnomalyDetectionService.AnomalyEvaluationResult;
+import mbdo.dt.services.AnomalyDetectionService.EvaluationStatus;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -32,7 +33,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** The TokenLocation model from src/main/resources, with a controllable clock. */
 @SpringJUnitConfig(classes = {SysMLV2Parser.class, StructuralDefinitionExtractor.class, BehavioralElementExtractor.class,
-        ConstraintExtractor.class, DatabaseSchemaDeriver.class, StateMachineSelector.class, RuntimeInterpreter.class})
+        ConstraintExtractor.class, ReplanningElementExtractor.class, DatabaseSchemaDeriver.class,
+        StateMachineSelector.class, RuntimeInterpreter.class})
 class AnomalyDetectionTimeCheckTest {
 
     @Autowired
@@ -43,7 +45,6 @@ class AnomalyDetectionTimeCheckTest {
     private RuntimeInterpreter interpreter;
 
     private final AtomicLong clock = new AtomicLong(1_000_000L);
-    private final List<AnomalyEvaluationResult> reactedTo = new ArrayList<>();
     private final Map<String, Object> values = new HashMap<>();
     private AnomalyDetectionImpl detection;
 
@@ -53,8 +54,7 @@ class AnomalyDetectionTimeCheckTest {
         for (Resource resource : new PathMatchingResourcePatternResolver().getResources("classpath*:models/**/*.sysml")) {
             models.add(parser.loadModel(resource));
         }
-        detection = new AnomalyDetectionImpl(clock::get, interpreter, selector,
-                (request, result, latest) -> reactedTo.add(result), "TokenLocation");
+        detection = new AnomalyDetectionImpl(clock::get, interpreter, selector, "TokenLocation");
         detection.activateModels(models);
     }
 
@@ -97,7 +97,8 @@ class AnomalyDetectionTimeCheckTest {
         AnomalyEvaluationResult result = detection.checkTimeTransitions();
         assertEquals(EvaluationStatus.ANOMALY_DETECTED, result.status());
         assertEquals("ConveyorBeltFeedDepartureLimit", result.transitionName());
-        assertEquals(result, reactedTo.get(reactedTo.size() - 1));
+        assertEquals(List.of(result), detection.detectDisruptions());
+        assertEquals(List.of(), detection.detectDisruptions(), "an anomaly is handed out once");
     }
 
     /** Up to the token dropped at the conveyor belt feed (Token_t0 .. Token_t3). */
