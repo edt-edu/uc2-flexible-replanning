@@ -1,0 +1,53 @@
+import { Component, computed, inject, OnDestroy, OnInit, signal } from '@angular/core';
+
+
+import { NavbarComponent, NavbarRole } from '../../components/navbar/navbar.component';
+import { ReplanningIncidentPopupComponent } from '../../components/replanning-incident-popup/replanning-incident-popup.component';
+import { FactoryShopfloorLayoutComponent } from '../../components/factory-shopfloor-layout/factory-shopfloor-layout.component';
+import { IncidentTimelineComponent } from '../../components/incident-timeline/incident-timeline.component';
+import { ReplanningIncidentStore } from '../../stores/replanning-incident.store';
+
+const ROLE_SESSION_STORAGE_KEY = 'factorySupervisionRole';
+
+@Component({
+    selector: 'app-factory-supervision',
+    standalone: true,
+    imports: [NavbarComponent, ReplanningIncidentPopupComponent, FactoryShopfloorLayoutComponent, IncidentTimelineComponent],
+    templateUrl: './factory-supervision.component.html',
+    styleUrls: ['./factory-supervision.component.css']
+})
+export class FactorySupervisionComponent implements OnInit, OnDestroy {
+    private replanningIncidentStore = inject(ReplanningIncidentStore);
+
+    selectedRole = signal<NavbarRole>('Maintenance Engineer');
+    currentReplanningIncident = this.replanningIncidentStore.currentIncident;
+    replanningHistory = this.replanningIncidentStore.history;
+    isOperationalEngineer = computed(() => this.selectedRole() === 'Maintenance Engineer');
+
+    ngOnInit(): void {
+        const savedRole = sessionStorage.getItem(ROLE_SESSION_STORAGE_KEY);
+
+        if (this.isValidRole(savedRole)) {
+            this.selectedRole.set(savedRole);
+        }
+
+        this.replanningIncidentStore.connect();
+    }
+
+    ngOnDestroy(): void {
+        this.replanningIncidentStore.disconnect();
+    }
+
+    onRoleChange(role: NavbarRole): void {
+        this.selectedRole.set(role);
+        sessionStorage.setItem(ROLE_SESSION_STORAGE_KEY, role);
+    }
+
+    onValidateCorrection(comment: string): void {
+        this.replanningIncidentStore.resolveCurrentIncident(comment);
+    }
+
+    private isValidRole(role: string | null): role is NavbarRole {
+        return role === 'Maintenance Engineer' || role === 'Factory Manager';
+    }
+}

@@ -1,37 +1,377 @@
 package mbdo.dt.services.impl;
 
-import mbdo.dt.domain.DataRequest;
-import mbdo.dt.services.AnomalyDetection.AnomalyEvaluationResult;
+import mbdo.dt.domain.AnomalyContext;
+import mbdo.dt.models.SysMLReplanningModel;
+import mbdo.dt.models.SysMLReplanningModel.MachineStop;
+import mbdo.dt.models.SysMLReplanningModel.Migration;
+import mbdo.dt.models.SysMLReplanningModel.Rule;
+import mbdo.dt.models.SysMLReplanningModel.Strategy;
+import mbdo.dt.models.SysMLV2Parser.ParsedSysMLModel;
+import mbdo.dt.replanning.ReplanningPlan;
+import mbdo.dt.replanning.ReplanningPlan.Kind;
+import mbdo.dt.replanning.ReplanningPlan.Status;
+import mbdo.dt.replanning.ReplanningPlan.Step;
+import mbdo.dt.replanning.ReplanningPlan.StepStatus;
+import mbdo.dt.replanning.scada.ScadaClient;
+import mbdo.dt.replanning.scada.ScadaCommandResult;
+import mbdo.dt.replanning.scada.ScadaConflictException;
+import mbdo.dt.replanning.scada.ScadaException;
+import mbdo.dt.replanning.scada.ScadaMachine;
+import mbdo.dt.services.AnomalyDetectionService.AnomalyEvaluationResult;
+import mbdo.dt.services.NotificationService;
 import mbdo.dt.services.ReplanningService;
+import mbdo.dt.services.RuntimeContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.function.Predicate;
 
+/**
+ * Reacts to an anomaly with the replanning strategy it triggers, without the operator's approval:
+ * <ol>
+ *     <li>plans it on the missions and states the SCADA machines are in: each migrated machine goes to the target
+ *     state of the first rule leaving its state whose guard holds, or else to the state of the same name;</li>
+ *     <li>until every machine can be migrated (e.g. a gripper still over the belt), plans again every
+ *     {@code retryDelayMs}, for at most {@code retryMaxMs}, while the anomaly's incident is open;</li>
+ *     <li>executes it: stops the failed machines (their mission, then the command they execute; in between, the
+ *     command their MachineStop gives, e.g. the belt bringing a token to the swap), then swaps each migrated machine's
+ *     mission atomically. A machine that moved on meanwhile makes it plan again.</li>
+ * </ol>
+ * The plan is attached to the anomaly's incident at each step, for the operator to follow. Once the operator repaired
+ * the failure, the strategy's recovery strategy brings the machines back to their nominal missions the same way.
+ */
 @Service
 public class ReplanningServiceImpl implements ReplanningService {
 
     private static final Logger logger = LoggerFactory.getLogger(ReplanningServiceImpl.class);
 
-    public ReplanningServiceImpl() {
+    /** The monitored token location, for the guards of the migration rules: the state of the anomaly's token. */
+    public static final String TOKEN_LOCATION_STATE = "tokenLocation.state";
+    /** The command stopping a machine (every machine has one): the PLC interrupts the command in progress. */
+    private static final String STOP_COMMAND = "stop";
+
+    private final ScadaClient scada;
+    private final NotificationService notificationService;
+    private final RuntimeContext runtimeContext;
+    private final long retryDelayMs;
+    private final long retryMaxMs;
+    private final long commandTimeoutMs;
+
+    private volatile SysMLReplanningModel model = new SysMLReplanningModel(List.of(), Map.of());
+    /** The strategy each anomaly triggered, for its recovery once the operator repaired the failure. */
+    private final Map<String, Strategy> anomalyStrategies = new ConcurrentHashMap<>();
+    /** Each anomaly with a strategy, for the plans of its recovery. */
+    private final Map<String, AnomalyContext> anomalyContexts = new ConcurrentHashMap<>();
+    /** The state of the token of each anomaly, when it was detected: other tokens move on meanwhile. */
+    private final Map<String, String> anomalyTokenStates = new ConcurrentHashMap<>();
+    /** Talks to the SCADA away from the anomaly detection, which must not wait for it. One replanning at a time. */
+    private final ExecutorService worker = Executors.newSingleThreadExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "replanning");
+        thread.setDaemon(true);
+        return thread;
+    });
+
+    public ReplanningServiceImpl(
+            ScadaClient scada,
+            NotificationService notificationService,
+            RuntimeContext runtimeContext,
+            @Value("${replanning.retry-delay-ms:1000}") long retryDelayMs,
+            @Value("${replanning.retry-max-ms:60000}") long retryMaxMs,
+            @Value("${replanning.command-timeout-ms:60000}") long commandTimeoutMs
+    ) {
+        this.scada = scada;
+        this.notificationService = notificationService;
+        this.runtimeContext = runtimeContext;
+        this.retryDelayMs = retryDelayMs;
+        this.retryMaxMs = retryMaxMs;
+        this.commandTimeoutMs = commandTimeoutMs;
     }
 
     @Override
-    public void handleAnomaly(
-            DataRequest triggeringRequest,
+    public void activateModels(List<ParsedSysMLModel> parsedModels) {
+        model = SysMLReplanningModel.merge(parsedModels.stream().map(ParsedSysMLModel::replanningModel).toList());
+        for (Strategy strategy : model.strategies()) {
+            logger.info("Replanning strategy {}: stops {}, migrations {}", strategy.name(),
+                    strategy.stoppedMachines(), strategy.migrations());
+            strategy.migrations().stream().filter(m -> !model.migrations().containsKey(m)).forEach(missing ->
+                    logger.error("Replanning strategy {} names an undefined migration {}", strategy.name(), missing));
+        }
+    }
+
+    @Override
+    public void handleDisruption(
             AnomalyEvaluationResult anomalyResult,
             Map<String, Object> latestRuntimeValues
     ) {
-        //TODO: to be implemented
-
+        if (anomalyResult == null || anomalyResult.anomalyContext() == null) {
+            return;
+        }
+        AnomalyContext context = anomalyResult.anomalyContext();
+        Strategy strategy = model.findTriggeredStrategy(anomalyResult.transitionName(), context.affectedStep())
+                .orElse(null);
+        if (strategy == null) {
+            logger.info("No replanning strategy for anomaly '{}' (constraint {}, state {}).",
+                    context.anomalyId(), anomalyResult.transitionName(), context.affectedStep());
+            return;
+        }
+        if (anomalyResult.currentState() != null) {
+            anomalyTokenStates.put(context.anomalyId(), anomalyResult.currentState());
+        }
+        anomalyStrategies.put(context.anomalyId(), strategy);
+        anomalyContexts.put(context.anomalyId(), context);
+        Map<String, Object> values = new HashMap<>(latestRuntimeValues == null ? Map.of() : latestRuntimeValues);
+        values.put(TOKEN_LOCATION_STATE, anomalyResult.currentState());
+        logger.info("Anomaly '{}' triggers replanning strategy {}.", context.anomalyId(), strategy.name());
+        worker.submit(() -> replan(strategy, context.anomalyId(), values,
+                plan -> notificationService.notifyDisruption(context.withReplanningPlan(plan))));
     }
-    private String selectMission(Map<String, Object> values) {
-        //TODO: to be implemented
 
-        return null;
+    @Override
+    public void recover(String anomalyId) {
+        anomalyTokenStates.remove(anomalyId);
+        Strategy strategy = anomalyStrategies.remove(anomalyId);
+        AnomalyContext context = anomalyContexts.remove(anomalyId);
+        if (strategy == null || strategy.recoveryStrategy() == null) {
+            return;
+        }
+        Strategy recovery = model.findStrategy(strategy.recoveryStrategy()).orElse(null);
+        if (recovery == null) {
+            logger.error("Replanning strategy {} names an undefined recovery strategy {}", strategy.name(),
+                    strategy.recoveryStrategy());
+            return;
+        }
+        logger.info("Anomaly '{}' repaired: recovery strategy {}.", anomalyId, recovery.name());
+        // after the replanning of the anomaly, if it still runs: it stops once its incident is closed
+        worker.submit(() -> replan(recovery, null, currentValues(null), plan -> {
+            notificationService.closeDisruption(context.withRecoveryPlan(plan), null);
+            return true;
+        }));
     }
 
+    /**
+     * Plans the strategy on {@code values}, then on the latest observations until it can be executed, and executes it.
+     *
+     * @param publisher shows each version of the plan; false: drop the replanning (its incident is closed)
+     * @return the plan as it ended (executed, failed, given up or dropped), null if interrupted
+     */
+    private ReplanningPlan replan(Strategy strategy, String anomalyId, Map<String, ?> values,
+                                  Predicate<ReplanningPlan> publisher) {
+        long deadline = System.currentTimeMillis() + retryMaxMs;
+        while (true) {
+            ReplanningPlan plan;
+            try {
+                plan = plan(strategy, model, scada.machines(), values, anomalyId);
+            } catch (ScadaException e) {
+                plan = new ReplanningPlan(strategy.name(), strategy.description(), anomalyId, Status.WAITING,
+                        List.of(), List.of(e.getMessage()), null);
+            }
+            if (!publisher.test(plan)) {
+                logger.info("Replanning {} dropped: its incident is no longer open", strategy.name());
+                return plan;
+            }
+            if (plan.status() != Status.WAITING) {
+                try {
+                    return execute(plan, publisher);
+                } catch (ScadaConflictException e) {
+                    logger.info("Replanning {}: a machine moved on ({}), planning again", strategy.name(),
+                            e.getMessage());
+                }
+            }
+            if (System.currentTimeMillis() + retryDelayMs > deadline) {
+                logger.warn("Replanning {} given up after {} ms: {}", strategy.name(), retryMaxMs, plan.problems());
+                ReplanningPlan givenUp = plan.with(Status.FAILED, plan.steps(), "Given up after " + retryMaxMs + " ms");
+                publisher.test(givenUp);
+                return givenUp;
+            }
+            try {
+                Thread.sleep(retryDelayMs);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return null;
+            }
+            values = currentValues(anomalyId);
+        }
+    }
 
+    // ---- planning: pure ----
 
+    static ReplanningPlan plan(Strategy strategy, SysMLReplanningModel model, List<ScadaMachine> machines,
+                               Map<String, ?> values, String anomalyId) {
+        List<Step> steps = new ArrayList<>();
+        List<String> problems = new ArrayList<>();
+
+        for (String name : strategy.stoppedMachines()) {
+            Optional<ScadaMachine> machine = find(machines, name);
+            if (machine.isEmpty()) {
+                problems.add("Machine " + name + " is unknown to the SCADA");
+                continue;
+            }
+            // the machine is stopped even if it runs no mission: it may still execute a command (a belt moving)
+            String mission = machine.get().activeMission();
+            Optional<Rule> before = model.findStop(name).flatMap(stop -> stop.ruleBeforeStop(values));
+            String command = before.map(Rule::toState).orElse(null);
+            steps.add(new Step(Kind.STOP_MISSION, name, before.map(Rule::name).orElse(null), mission,
+                    machine.get().activeState(), null, command, StepStatus.PENDING,
+                    (mission == null ? "runs no mission" : "stop " + mission)
+                            + (command == null ? "" : ", then " + command + " (" + before.get().name() + ")")
+                            + ", then send it a stop command"));
+        }
+
+        for (String name : strategy.migrations()) {
+            Migration migration = model.migrations().get(name);
+            if (migration == null) {
+                problems.add("Migration " + name + " is not defined in the models");
+                continue;
+            }
+            Optional<ScadaMachine> machine = find(machines, migration.machine());
+            if (machine.isEmpty()) {
+                problems.add("Machine " + migration.machine() + " is unknown to the SCADA");
+                continue;
+            }
+            Step step = migrationStep(migration, machine.get(), values);
+            if (step.status() == StepStatus.FAILED) {
+                problems.add(step.detail());
+            } else {
+                steps.add(step);
+            }
+        }
+
+        return new ReplanningPlan(strategy.name(), strategy.description(), anomalyId,
+                problems.isEmpty() ? Status.PLANNED : Status.WAITING, List.copyOf(steps), List.copyOf(problems),
+                null);
+    }
+
+    /** The migration of a machine, FAILED (with why) if it can't be migrated from its mission and state. */
+    private static Step migrationStep(Migration migration, ScadaMachine machine, Map<String, ?> values) {
+        String state = machine.activeState();
+        Step step = new Step(Kind.MIGRATE, machine.name(), null, machine.activeMission(), state,
+                migration.toMission(), null, StepStatus.FAILED, null);
+
+        if (migration.toMission().equals(machine.activeMission())) {
+            return step.with(StepStatus.SKIPPED, "already runs " + migration.toMission());
+        }
+        if (migration.fromMission() == null && machine.activeMission() == null) {
+            return new Step(Kind.MIGRATE, machine.name(), "start", null, null, migration.toMission(), null,
+                    StepStatus.PENDING, "start " + migration.toMission());
+        }
+        if (!migration.fromMission().equals(machine.activeMission())) {
+            return step.with(StepStatus.FAILED, machine.name() + " runs "
+                    + (machine.activeMission() == null ? "no mission" : machine.activeMission())
+                    + ", migration " + migration.name() + " starts from " + migration.fromMission());
+        }
+        if (migration.waitStates().contains(state)) {
+            return step.with(StepStatus.FAILED, machine.name() + " is in " + state + ": waiting for it to leave it");
+        }
+
+        List<Rule> leaving = migration.rulesFrom(state);
+        Optional<Rule> rule = leaving.stream().filter(r -> r.holds(values)).findFirst();
+        if (!leaving.isEmpty() && rule.isEmpty()) {
+            return step.with(StepStatus.FAILED, "Migration " + migration.name() + ": no guard holds from " + state
+                    + " " + leaving.stream().map(r -> r.name() + ": " + r.guardExpression()).toList());
+        }
+        // no rule leaves the state: the alternative mission starts in the state of the same name
+        String toState = rule.map(Rule::toState).orElse(state);
+        String ruleName = rule.map(Rule::name).orElse("same state");
+        if (!machine.hasState(migration.toMission(), toState)) {
+            return step.with(StepStatus.FAILED, "Migration " + migration.name() + " (" + ruleName + "): "
+                    + migration.toMission() + " has no state " + toState + " in the SCADA");
+        }
+        return new Step(Kind.MIGRATE, machine.name(), ruleName, migration.fromMission(), state,
+                migration.toMission(), toState, StepStatus.PENDING,
+                "swap to " + migration.toMission() + "::" + toState);
+    }
+
+    private static Optional<ScadaMachine> find(List<ScadaMachine> machines, String name) {
+        return machines.stream().filter(m -> m.name().equals(name)).findFirst();
+    }
+
+    // ---- execution ----
+
+    /**
+     * Executes the steps one after the other; the first that fails ends it.
+     *
+     * @throws ScadaConflictException if a machine moved on since the plan was computed: plan again
+     */
+    private ReplanningPlan execute(ReplanningPlan plan, Predicate<ReplanningPlan> publisher) {
+        List<Step> steps = new ArrayList<>(plan.steps());
+        publisher.test(plan.with(Status.EXECUTING, steps, null));
+        for (int i = 0; i < steps.size(); i++) {
+            Step step = steps.get(i);
+            if (step.status() != StepStatus.PENDING) {
+                continue;
+            }
+            try {
+                steps.set(i, step.with(StepStatus.DONE, step.kind() == Kind.STOP_MISSION ? stop(step) : swap(step)));
+            } catch (ScadaConflictException e) {
+                throw e;
+            } catch (ScadaException e) {
+                steps.set(i, step.with(StepStatus.FAILED, e.getMessage()));
+                for (int j = i + 1; j < steps.size(); j++) {
+                    if (steps.get(j).status() == StepStatus.PENDING) {
+                        steps.set(j, steps.get(j).with(StepStatus.SKIPPED, "not executed: a previous step failed"));
+                    }
+                }
+                logger.warn("Replanning {} failed on {}: {}", plan.strategy(), step.machine(), e.getMessage());
+                ReplanningPlan failed = plan.with(Status.FAILED, steps,
+                        "Failed on " + step.machine() + ": " + e.getMessage());
+                publisher.test(failed);
+                return failed;
+            }
+            logger.info("Replanning {}: {} {} ({})", plan.strategy(), step.kind(), step.machine(),
+                    steps.get(i).detail());
+            publisher.test(plan.with(Status.EXECUTING, steps, null));
+        }
+        ReplanningPlan executed = plan.with(Status.EXECUTED, steps, "Replanning " + plan.strategy() + " executed");
+        publisher.test(executed);
+        return executed;
+    }
+
+    private String stop(Step step) {
+        scada.stopMission(step.machine(), null, null);
+        String stopped = step.fromMission() == null ? "runs no mission" : "stopped " + step.fromMission();
+        String command = step.toState();
+        if (command != null) {
+            String direction = model.findStop(step.machine()).map(MachineStop::direction).orElse(null);
+            List<Map<String, Object>> parameters = direction == null ? List.of()
+                    : List.of(Map.of("passableType", "DIRECTION", "passable", Map.of("direction", direction)));
+            ScadaCommandResult before = scada.executeCommand(step.machine(), command, parameters, commandTimeoutMs);
+            if (!before.done()) {
+                throw new ScadaException(stopped + ", but its " + command + " command ended with " + before.status());
+            }
+            stopped += ", " + command + " done";
+        }
+        ScadaCommandResult result = scada.executeCommand(step.machine(), STOP_COMMAND, List.of(), commandTimeoutMs);
+        if (!result.done()) {
+            throw new ScadaException(stopped + ", but its stop command ended with " + result.status());
+        }
+        return stopped + ", machine stopped";
+    }
+
+    private String swap(Step step) {
+        if (step.fromMission() == null) {
+            scada.swapMission(step.machine(), step.toMission(), null, "", null);
+            return "started " + step.toMission();
+        }
+        scada.swapMission(step.machine(), step.toMission(), step.toState(), step.fromMission(), step.fromState());
+        return "from " + step.fromMission() + "::" + step.fromState() + " to " + step.toMission() + "::"
+                + step.toState() + " (" + step.rule() + ")";
+    }
+
+    /** The latest observations, with the state of the anomaly's token (of the most recent token without anomaly). */
+    private Map<String, ?> currentValues(String anomalyId) {
+        Map<String, Object> values = new HashMap<>(runtimeContext.snapshot());
+        String tokenState = anomalyId == null ? null : anomalyTokenStates.get(anomalyId);
+        values.put(TOKEN_LOCATION_STATE, tokenState != null ? tokenState : runtimeContext.getCurrentState());
+        return values;
+    }
 }

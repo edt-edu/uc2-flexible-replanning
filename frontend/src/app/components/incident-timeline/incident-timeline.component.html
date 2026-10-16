@@ -1,0 +1,120 @@
+<section class="timeline-panel" aria-labelledby="incidentTimelineTitle">
+    <header class="timeline-header">
+        <h2 id="incidentTimelineTitle">Replanning incidents · past hour</h2>
+        <div class="timeline-summary">
+            <span class="chip">{{ bars().length }} incident{{ bars().length === 1 ? '' : 's' }}</span>
+            @if (happeningCount()) {
+                <span class="chip happening">{{ happeningCount() }} happening</span>
+            }
+            <span class="legend" aria-hidden="true">
+                <span class="legend-swatch"></span>Ended
+                <span class="legend-swatch happening"></span>Happening
+            </span>
+        </div>
+    </header>
+
+    <div class="chart">
+        <div class="track" [style.--lanes]="laneCount()" role="group"
+            [attr.aria-label]="'Incidents between ' + (windowStart() | date: 'HH:mm') + ' and ' + (now() | date: 'HH:mm')">
+            @for (tick of ticks(); track tick.time) {
+                <span class="gridline" [style.left.%]="tick.left" aria-hidden="true"></span>
+            }
+            <span class="now-line" aria-hidden="true"></span>
+
+            @for (bar of bars(); track bar.incident.id) {
+                <button type="button" class="bar" [class.happening]="bar.happening"
+                    [class.selected]="bar.incident.id === selectedId()" [class.clipped-start]="bar.clippedStart"
+                    [class.clipped-end]="bar.clippedEnd" [style.left.%]="bar.left" [style.width.%]="bar.width"
+                    [style.--lane]="bar.lane" [attr.aria-pressed]="bar.incident.id === selectedId()"
+                    [attr.aria-label]="'Incident on ' + bar.incident.machineId + ', ' + (bar.happening ? 'happening' : 'ended')
+                        + ', duration ' + durationOf(bar.incident) + ': ' + bar.incident.message + '. Show details'"
+                    [title]="bar.incident.machineId + ' · ' + bar.incident.message"
+                    (click)="selectedId.set(bar.incident.id); detailsExpanded.set(true)">
+                    <span class="bar-label">{{ bar.incident.machineId }}</span>
+                </button>
+            }
+
+            @if (!bars().length) {
+                <p class="empty-state">No replanning incident in the past hour.</p>
+            }
+        </div>
+
+        <div class="axis" aria-hidden="true">
+            @for (tick of ticks(); track tick.time) {
+                @if (tick.left > 3 && tick.left < 93) {
+                    <span class="tick-label" [style.left.%]="tick.left">{{ tick.time | date: 'HH:mm' }}</span>
+                }
+            }
+            <span class="tick-label now-label">now</span>
+        </div>
+    </div>
+
+    @if (selectedIncident(); as incident) {
+        @let happening = isHappening(incident);
+        <section class="details" [class.happening]="happening">
+            <button type="button" class="details-toggle" (click)="detailsExpanded.set(!detailsExpanded())"
+                [attr.aria-expanded]="detailsExpanded()" aria-controls="incidentTimelineDetails">
+                <span class="chip status-badge" [class.happening]="happening">{{ happening ? 'Happening' : 'Ended' }}</span>
+                <span class="details-title">{{ incident.machineId }} · {{ incident.message }}</span>
+                <span class="collapse-icon" [class.collapsed]="!detailsExpanded()" aria-hidden="true">▾</span>
+            </button>
+
+            @if (detailsExpanded()) {
+                <div class="details-body" id="incidentTimelineDetails">
+                    <dl class="details-grid">
+                        <div><dt>Machine</dt><dd>{{ incident.machineId }}</dd></div>
+                        <div><dt>Status</dt><dd>{{ happening ? 'Happening' : 'Ended' }}</dd></div>
+                        <div><dt>Start</dt><dd>{{ incident.startTime | date: 'dd/MM HH:mm:ss' }}</dd></div>
+                        <div><dt>End</dt><dd>{{ happening ? 'ongoing' : (incident.resolvedAt | date: 'dd/MM HH:mm:ss') }}</dd></div>
+                        <div><dt>Duration</dt><dd>{{ durationOf(incident) }}{{ happening ? ' (so far)' : '' }}</dd></div>
+                        <div class="wide"><dt>Anomaly</dt><dd>{{ incident.message }}</dd></div>
+                        <div class="wide">
+                            <dt>Operator correction</dt>
+                            <dd [class.placeholder]="!incident.operatorComment">{{ incident.operatorComment || 'No correction yet' }}</dd>
+                        </div>
+                    </dl>
+
+                    @for (outcome of [{ title: 'Replanning', plan: incident.replanningPlan },
+                            { title: 'Back to nominal', plan: incident.recoveryPlan }]; track outcome.title) {
+                        @if (outcome.plan; as plan) {
+                            <section class="plan" [attr.aria-label]="outcome.title">
+                                <div class="plan-header">
+                                    <h4>{{ outcome.title }}: {{ plan.description || plan.strategy }}</h4>
+                                    <span class="plan-status" [attr.data-status]="plan.status">{{ plan.status }}</span>
+                                </div>
+                                <ol class="plan-steps">
+                                    @for (step of plan.steps; track $index) {
+                                        <li [attr.data-status]="step.status">
+                                            <span class="step-machine">{{ step.machine }}</span>
+                                            <span class="muted">
+                                                @if (step.kind === 'STOP_MISSION') {
+                                                    {{ step.fromMission ?? 'mission' }}::{{ step.fromState ?? '?' }} → stop
+                                                } @else if (!step.fromMission) {
+                                                    start {{ step.toMission }}
+                                                } @else {
+                                                    {{ step.fromMission }}::{{ step.fromState }} → {{ step.toMission }}::{{ step.toState }}
+                                                }
+                                            </span>
+                                            <span class="muted step-detail">{{ step.status }} · {{ step.detail }}</span>
+                                        </li>
+                                    }
+                                </ol>
+                                @for (problem of plan.problems; track problem) {
+                                    <p class="plan-problem">{{ problem }}</p>
+                                }
+                                @if (plan.message) {
+                                    <p class="plan-message">{{ plan.message }}</p>
+                                }
+                            </section>
+                        }
+                    }
+                    @if (!incident.replanningPlan && !incident.recoveryPlan) {
+                        <p class="hint">No replanning outcome recorded for this incident.</p>
+                    }
+                </div>
+            }
+        </section>
+    } @else if (bars().length) {
+        <p class="hint">Select an incident in the chart to see its details.</p>
+    }
+</section>

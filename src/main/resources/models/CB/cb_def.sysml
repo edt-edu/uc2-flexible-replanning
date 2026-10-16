@@ -42,6 +42,7 @@ package ConveyorBeltSystem {
 
         item def FeedFreeBufferedMessage :> BufferedMessage;
         item def SwapBusyBufferedMessage :> BufferedMessage;
+        item def TokenAtFeedBufferedMessage :> BufferedMessage;
 
         item def CommandSuccessEventMessage :> EventMessage;
     }

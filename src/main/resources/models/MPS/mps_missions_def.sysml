@@ -19,14 +19,15 @@ package MultiProcessingStationMissions {
         accept CommandSuccessEventMessage then Idle;
 
         state Idle;
-        accept when
-                multiProcessingStation.sensor_MPS_in == true and
-                multiProcessingStation.sensor_MPS_out == false
+        accept when multiProcessingStation.sensor_MPS_in == true
             do send new AcquireRequestBufferedMessage(sender=multiProcessingStation) to zoneMPS
             then ZoneAcquired;
 
         state ZoneAcquired;
-        accept AcquireResponseEventMessage do multiProcessingStation.process then ProcessCMD;
+        accept AcquireResponseEventMessage then WaitForOutputFree;
+
+        state WaitForOutputFree;
+        accept when multiProcessingStation.sensor_MPS_out == false do multiProcessingStation.process then ProcessCMD;
 
         state ProcessCMD;
         accept CommandSuccessEventMessage

@@ -1,0 +1,21 @@
+<app-navbar [title]="'Factory Supervision'" [showExportButton]="false" [showRoleToggle]="true"
+  [selectedRole]="selectedRole()" (roleChange)="onRoleChange($event)">
+</app-navbar>
+
+<main class="factory-page" [class.manager-view]="!isOperationalEngineer()">
+  <app-factory-shopfloor-layout class="shopfloor-full"></app-factory-shopfloor-layout>
+
+  @if (!isOperationalEngineer()) {
+    <app-incident-timeline class="incident-timeline-dock" [currentIncident]="currentReplanningIncident()"
+      [history]="replanningHistory()">
+    </app-incident-timeline>
+  }
+
+  @if (currentReplanningIncident(); as activeIncident) {
+    @if (isOperationalEngineer()) {
+      <app-replanning-incident-popup [incident]="activeIncident"
+        (validateCorrection)="onValidateCorrection($event)">
+      </app-replanning-incident-popup>
+    }
+  }
+</main>

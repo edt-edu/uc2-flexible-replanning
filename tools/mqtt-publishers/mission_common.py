@@ -1,5 +1,6 @@
 
 import json
+import os
 from datetime import datetime, timezone
 
 import paho.mqtt.client as mqtt
@@ -7,34 +8,36 @@ import paho.mqtt.client as mqtt
 DEFAULT_BROKER = "mbdo-server.local"
 DEFAULT_PORT = 1883
 
-SITE = "SIM01"
+# Topics are the ones republished by the platform data-gateway-service
+# (gateway/<setup>/<MachineModel>/<attribute>), so the DT can be driven without PLCs or gateway.
+# Set SETUP=REN_1S1V_1C1V_1H1M_02 to target the Rennes setup (the twin accepts any setup name).
+SETUP = os.environ.get("SETUP", "VIRTUAL_1C1H1M1S2V_01")
+GATEWAY = f"gateway/{SETUP}"
 
 TOPICS = {
 
-    "sl.sensor_SL_in":    f"PLC/{SITE}/SortingLine/I1SortingLine01/measurements/input/sortingLineSensInputLightBarrier",
-    "sl.sensor_SL_blue":  f"PLC/{SITE}/SortingLine/I1SortingLine01/measurements/input/sortingLineSensBlueLightBarrier",
-    "sl.sensor_SL_white": f"PLC/{SITE}/SortingLine/I1SortingLine01/measurements/input/sortingLineSensWhiteLightBarrier",
-    "sl.sensor_SL_red":   f"PLC/{SITE}/SortingLine/I1SortingLine01/measurements/input/sortingLineSensRedLightBarrier",
+    "sl.sensor_SL_in":    f"{GATEWAY}/SLSystemModel/sortingLineSensInputLightBarrier",
+    "sl.sensor_SL_blue":  f"{GATEWAY}/SLSystemModel/sortingLineSensBlueLightBarrier",
+    "sl.sensor_SL_white": f"{GATEWAY}/SLSystemModel/sortingLineSensWhiteLightBarrier",
+    "sl.sensor_SL_red":   f"{GATEWAY}/SLSystemModel/sortingLineSensRedLightBarrier",
 
-    "cb.conveyorSensFeed": f"PLC/{SITE}/ConveyorBelt/I1ConveyorBelt01/measurements/input/conveyorSensFeed",
-    "cb.conveyorSensSwap": f"PLC/{SITE}/ConveyorBelt/I1ConveyorBelt01/measurements/input/conveyorSensSwap",
+    "cb.conveyorSensFeed": f"{GATEWAY}/CBSystemModel/conveyorSensFeed",
+    "cb.conveyorSensSwap": f"{GATEWAY}/CBSystemModel/conveyorSensSwap",
 
-    "vgr1.vacuumActCompressorOn": f"PLC/{SITE}/VacuumGripper/I1VacuumGripper01/measurements/output/vacuumActCompressorOn",
-    "vgr1.vacuumActValve":        f"PLC/{SITE}/VacuumGripper/I1VacuumGripper01/measurements/output/vacuumActValve",
+    "vgr1.vacuumActCompressorOn": f"{GATEWAY}/VGRSystemModel_01/vacuumActCompressorOn",
+    "vgr1.vacuumActValve":        f"{GATEWAY}/VGRSystemModel_01/vacuumActValve",
 
-    "vgr2.vacuumActCompressorOn": f"PLC/{SITE}/VacuumGripper/I1VacuumGripper02/measurements/output/vacuumActCompressorOn",
-    "vgr2.vacuumActValve":        f"PLC/{SITE}/VacuumGripper/I1VacuumGripper02/measurements/output/vacuumActValve",
+    "vgr2.vacuumActCompressorOn": f"{GATEWAY}/VGRSystemModel_02/vacuumActCompressorOn",
+    "vgr2.vacuumActValve":        f"{GATEWAY}/VGRSystemModel_02/vacuumActValve",
 
-    "mpo.sensor_MPS_in":  f"PLC/{SITE}/MultiProcessing/I1MultiProcessing01/measurements/input/sensor_MPS_in",
-    "mpo.sensor_MPS_out": f"PLC/{SITE}/MultiProcessing/I1MultiProcessing01/measurements/input/sensor_MPS_out",
+    "mpo.sensor_MPS_in":  f"{GATEWAY}/MPSystemModel/sensor_MPS_in",
+    "mpo.sensor_MPS_out": f"{GATEWAY}/MPSystemModel/sensor_MPS_out",
 
-    "encoderTolerance":                   "TEST/TokenLocation/positioning/encoderTolerance",
-    "vgr1.3DPosition":                    "TEST/TokenLocation/positioning/vgr1_3DPosition",
-    "vgr1.expected3DPositionBlueOutput":  "TEST/TokenLocation/positioning/vgr1_expected3DPositionBlueOutput",
-    "vgr1.expected3DPositionWhiteOutput": "TEST/TokenLocation/positioning/vgr1_expected3DPositionWhiteOutput",
-    "vgr1.expected3DPositionRedOutput":   "TEST/TokenLocation/positioning/vgr1_expected3DPositionRedOutput",
-    "vgr2.3DPosition":                    "TEST/TokenLocation/positioning/vgr2_3DPosition",
-    "vgr2.expected3DPositionCBSwap":      "TEST/TokenLocation/positioning/vgr2_expected3DPositionCBSwap",
+    # encoder counters, compared with the VGRs' named positions by the pick-up transitions
+    "vgr1.rotEncoder": f"{GATEWAY}/VGRSystemModel_01/vacuumSensRotEncoderCounter",
+    "vgr1.armEncoder": f"{GATEWAY}/VGRSystemModel_01/vacuumSensArmEncoderCounter",
+    "vgr2.rotEncoder": f"{GATEWAY}/VGRSystemModel_02/vacuumSensRotEncoderCounter",
+    "vgr2.armEncoder": f"{GATEWAY}/VGRSystemModel_02/vacuumSensArmEncoderCounter",
 }
 
 

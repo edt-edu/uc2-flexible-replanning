@@ -3,6 +3,8 @@ package mbdo.dt.services.impl;
 import mbdo.dt.domain.AnomalyContext;
 import mbdo.dt.domain.DataRequest;
 import mbdo.dt.models.RuntimeInterpreter;
+import mbdo.dt.models.RuntimeInterpreter.GuardClauseEvaluation;
+import mbdo.dt.models.RuntimeInterpreter.GuardTransitionEvaluation;
 import mbdo.dt.models.StateMachineSelector;
 import mbdo.dt.models.SysMLBehavioralModel;
 import mbdo.dt.models.SysMLBehavioralModel.StateMachine;
@@ -10,8 +12,7 @@ import mbdo.dt.models.SysMLBehavioralModel.Transition;
 import mbdo.dt.models.SysMLStructuralModel;
 import mbdo.dt.models.SysMLStructuralModel.ConstraintUsage;
 import mbdo.dt.models.SysMLV2Parser;
-import mbdo.dt.services.AnomalyDetection;
-import mbdo.dt.services.AnomalyReactionService;
+import mbdo.dt.services.AnomalyDetectionService;
 import mbdo.dt.utils.RuntimeInterpreterUtils;
 import mbdo.dt.utils.StateMachineInferenceUtils;
 import org.slf4j.Logger;
@@ -23,19 +24,31 @@ import org.springframework.stereotype.Service;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.function.LongSupplier;
 
+/**
+ * Follows every token on the line with its own run of the monitored state machine (TokenLocation).
+ *
+ * <p>One run always waits in the initial state for the next token. When it leaves the initial state (a token at the
+ * SortingLine input), it becomes that token's run, and a new run waits for the next token. That new run is only armed
+ * once its entry guard no longer holds (the input is free again), so that the same token isn't counted twice. A token's
+ * run that comes back to the initial state (the token left the line) ends.
+ *
+ * <p>Every observation is evaluated on each run, the oldest token first, so that a token leaves a location before the
+ * next one enters it; a run doesn't enter a state another token is in. An anomaly stops only the run of its token: the
+ * other tokens are still followed, and new tokens still enter the line.
+ */
 @Service
-public class AnomalyDetectionImpl implements AnomalyDetection {
+public class AnomalyDetectionImpl implements AnomalyDetectionService {
 
     private static final Logger logger = LoggerFactory.getLogger(AnomalyDetectionImpl.class);
 
     private final LongSupplier clockMillis;
-    private final List<String> transitionHistory = new ArrayList<>();
 
     private SysMLStructuralModel structuralModel;
 
@@ -45,35 +58,54 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
     private StateMachine activeStateMachine;
 
     private String activeStateMachineId;
-    private String currentState;
-    private boolean anomalyDetected;
-    private long stateEnteredAtMillis;
     private final RuntimeInterpreter runtimeInterpreter;
     private final StateMachineSelector stateMachineSelector;
-    private final AnomalyReactionService anomalyReactionService;
     private final String primaryStateMachineName;
+
+    /** The runs of the state machine, the oldest token first; the run waiting for the next token is the last one. */
+    private final List<TokenRun> runs = new ArrayList<>();
+    private int nextTokenNumber = 1;
+
+    /** The run of each anomaly, until the operator dealt with it ({@link #releaseAnomaly}). */
+    private final Map<String, TokenRun> anomalyRuns = new HashMap<>();
+
+    /** The anomalies detected and not handed out yet ({@link #detectDisruptions}), in the order of detection. */
+    private final List<AnomalyEvaluationResult> disruptions = new ArrayList<>();
+
+    /** The run being evaluated (every evaluation holds the lock of this service). */
+    private TokenRun run;
+
+    /** One token followed by the state machine (number 0: the run waiting for the next token). */
+    private static final class TokenRun {
+        int token;
+        String currentState;
+        long stateEnteredAtMillis;
+        boolean anomalyDetected;
+        /** For the waiting run: whether its entry guard was seen false since it was created. */
+        boolean armed;
+        final List<String> transitionHistory = new ArrayList<>();
+
+        boolean waiting() {
+            return token == 0;
+        }
+    }
 
     @Autowired
     public AnomalyDetectionImpl(
             RuntimeInterpreter runtimeInterpreter,
             StateMachineSelector stateMachineSelector,
-            AnomalyReactionService anomalyReactionService,
-            @Value("${anomaly-detection.primary-state-machine:TokenLocation}") String primaryStateMachineName
-    ) {
-        this(System::currentTimeMillis, runtimeInterpreter, stateMachineSelector, anomalyReactionService, primaryStateMachineName);
+            @Value("${anomaly-detection.primary-state-machine:TokenLocation}") String primaryStateMachineName) {
+        this(System::currentTimeMillis, runtimeInterpreter, stateMachineSelector, primaryStateMachineName);
     }
 
     AnomalyDetectionImpl(
             LongSupplier clockMillis,
             RuntimeInterpreter runtimeInterpreter,
             StateMachineSelector stateMachineSelector,
-            AnomalyReactionService anomalyReactionService,
-            String primaryStateMachineName
-    ) {
+            String primaryStateMachineName) {
         this.clockMillis = clockMillis;
         this.runtimeInterpreter = runtimeInterpreter;
         this.stateMachineSelector = stateMachineSelector;
-        this.anomalyReactionService = anomalyReactionService;
         this.primaryStateMachineName = primaryStateMachineName;
     }
 
@@ -83,8 +115,8 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
             throw new IllegalStateException("No parsed sysml model was found");
         }
 
-        StateMachineSelector.ModelStateMachine selected =
-                stateMachineSelector.select(parsedModels, primaryStateMachineName);
+        StateMachineSelector.ModelStateMachine selected = stateMachineSelector.select(parsedModels,
+                primaryStateMachineName);
 
         structuralModel = selected.structuralModel();
         behavioralModel = selected.behavioralModel();
@@ -106,26 +138,48 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
 
     @Override
     public synchronized void reset() {
-        anomalyDetected = false;
-        transitionHistory.clear();
+        runs.clear();
+        anomalyRuns.clear();
+        disruptions.clear();
+        nextTokenNumber = 1;
 
         if (activeStateMachine == null) {
-            currentState = null;
-            stateEnteredAtMillis = 0L;
             return;
         }
 
         String initialState = activeStateMachine.initialState();
 
         if (initialState == null || initialState.isBlank()) {
-            throw new IllegalStateException("State machine '" + activeStateMachine.name() + "' has no initial state. Expected 'entry; then <State>;' in the SysML model."
-            );
+            throw new IllegalStateException("State machine '" + activeStateMachine.name()
+                    + "' has no initial state. Expected 'entry; then <State>;' in the SysML model.");
         }
 
-        currentState = initialState;
-        stateEnteredAtMillis = clockMillis.getAsLong();
+        // armed at once: a token already at the input when the monitoring starts is the first one
+        runs.add(newWaitingRun(true));
+    }
 
-        addToTransitionHistory(currentState);
+    @Override
+    public synchronized boolean releaseAnomaly(String anomalyId) {
+        TokenRun anomalyRun = anomalyRuns.remove(anomalyId);
+        if (anomalyRun == null || !runs.remove(anomalyRun)) {
+            return false;
+        }
+        if (anomalyRun.waiting()) {
+            runs.add(newWaitingRun(false));
+            logger.info("Anomaly '{}' dealt with: a new run waits for the next token", anomalyId);
+        } else {
+            logger.info("Anomaly '{}' dealt with: token #{} is no longer followed", anomalyId, anomalyRun.token);
+        }
+        return true;
+    }
+
+    private TokenRun newWaitingRun(boolean armed) {
+        TokenRun waiting = new TokenRun();
+        waiting.currentState = activeStateMachine.initialState();
+        waiting.stateEnteredAtMillis = clockMillis.getAsLong();
+        waiting.armed = armed;
+        waiting.transitionHistory.add(waiting.currentState);
+        return waiting;
     }
 
     @Override
@@ -134,67 +188,193 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
     }
 
     @Override
-    public synchronized AnomalyEvaluationResult evaluateObservation(DataRequest triggeringRequest, Map<String, Object> observedValues) {
-        Map<String, Object> safeObservedValues =
-                observedValues == null ? Collections.emptyMap() : observedValues;
+    public synchronized AnomalyEvaluationResult evaluateObservation(DataRequest triggeringRequest,
+            Map<String, Object> observedValues) {
+        Map<String, Object> safeObservedValues = observedValues == null ? Collections.emptyMap() : observedValues;
 
-        if (activeStateMachine == null) {
+        if (activeStateMachine == null || runs.isEmpty()) {
             return nonAnomalyResult(
                     EvaluationStatus.MODEL_NOT_LOADED,
                     null,
                     null,
                     null,
-                    "No anomaly detection state machine has been loaded."
-            );
+                    "No anomaly detection state machine has been loaded.");
         }
 
-        if (currentState == null) {
-            return nonAnomalyResult(
-                    EvaluationStatus.MODEL_NOT_LOADED,
-                    null,
-                    null,
-                    null,
-                    "The anomaly detection state machine has no current state."
-            );
+        List<AnomalyEvaluationResult> results = new ArrayList<>();
+
+        for (TokenRun tokenRun : List.copyOf(runs)) {
+            if (tokenRun.anomalyDetected) {
+                continue;
+            }
+            if (tokenRun.waiting() && !tokenRun.armed) {
+                tokenRun.armed = !initialTransitionEnabled(safeObservedValues);
+                continue;
+            }
+
+            run = tokenRun;
+            String stateBeforeEvaluation = tokenRun.currentState;
+            AnomalyEvaluationResult result = evaluateCurrentState(safeObservedValues);
+            logGuards(triggeringRequest, stateBeforeEvaluation, result, safeObservedValues);
+            afterEvaluation(tokenRun);
+            results.add(result);
         }
+        run = null;
 
-        if (anomalyDetected) {
-            return nonAnomalyResult(
-                    EvaluationStatus.ANOMALY_DETECTED,
-                    currentState,
-                    currentState,
-                    null,
-                    "An anomaly has already been detected. Reset is required before continuing."
-            );
+        return summarize(results);
+    }
+
+    private void logGuards(DataRequest triggeringRequest, String stateBeforeEvaluation,
+            AnomalyEvaluationResult result, Map<String, Object> observedValues) {
+        if (!logger.isDebugEnabled()) {
+            return;
         }
-
-        String stateBeforeEvaluation = currentState;
-
-        AnomalyEvaluationResult result = evaluateCurrentState(safeObservedValues);
-
-        if (logger.isDebugEnabled()) {
-            logger.debug("observation {}={}, state {} -> {}, status={}, {}",
+        List<GuardTransitionEvaluation> partlyTrueGuards = runtimeInterpreter.describeGuardTransitions(
+                        activeStateMachine, stateBeforeEvaluation, structuralModel, allStructuralModels, observedValues)
+                .stream()
+                .filter(GuardTransitionEvaluation::anyClauseTrue)
+                .toList();
+        if (!partlyTrueGuards.isEmpty()) {
+            logger.debug("observation {}={}, {} {} -> {}, status={}, {}{}",
                     triggeringRequest == null ? null : triggeringRequest.attributeName(),
                     triggeringRequest == null ? null : triggeringRequest.value(),
+                    describe(run),
                     stateBeforeEvaluation,
                     result.currentState(),
                     result.status(),
-                    result.message());
+                    result.message(),
+                    formatGuards(partlyTrueGuards));
+        }
+    }
+
+    /**
+     * After a run was evaluated: the waiting run that left the initial state becomes a token and a new run waits for
+     * the next token; a token's run back in the initial state ends.
+     */
+    private void afterEvaluation(TokenRun tokenRun) {
+        boolean inInitialState = activeStateMachine.initialState().equals(tokenRun.currentState);
+        if (tokenRun.waiting() && !inInitialState) {
+            tokenRun.token = nextTokenNumber++;
+            runs.add(newWaitingRun(false));
+            logger.info("Token #{} entered the line ({})", tokenRun.token, tokenRun.currentState);
+        } else if (!tokenRun.waiting() && inInitialState && !tokenRun.anomalyDetected) {
+            runs.remove(tokenRun);
+            logger.info("Token #{} left the line", tokenRun.token);
+        }
+    }
+
+    /** Whether a transition leaving the initial state is enabled: the next token is at the entry. */
+    private boolean initialTransitionEnabled(Map<String, ?> observedValues) {
+        return !runtimeInterpreter.findEnabledGuardTransitions(activeStateMachine, activeStateMachine.initialState(),
+                structuralModel, allStructuralModels, observedValues).isEmpty();
+    }
+
+    /**
+     * Keeps every anomaly (one per token) for {@link #detectDisruptions}, and returns the first anomaly, else the last
+     * transition fired, else the waiting result of the most recent token.
+     */
+    private AnomalyEvaluationResult summarize(List<AnomalyEvaluationResult> results) {
+        List<AnomalyEvaluationResult> anomalies = results.stream().filter(r -> r.anomalyContext() != null).toList();
+        AnomalyEvaluationResult summary;
+        if (!anomalies.isEmpty()) {
+            summary = anomalies.get(0);
+        } else {
+            summary = results.stream()
+                    .filter(r -> r.status() == EvaluationStatus.TRANSITION_FIRED)
+                    .reduce((first, second) -> second)
+                    .orElseGet(() -> results.isEmpty() ? idleResult() : mostRecent(results));
         }
 
-        anomalyReactionService.handleDetectedAnomaly(triggeringRequest, result, safeObservedValues);
+        disruptions.addAll(anomalies);
+        return summary;
+    }
 
-        return result;
+    @Override
+    public synchronized List<AnomalyEvaluationResult> detectDisruptions() {
+        List<AnomalyEvaluationResult> detected = List.copyOf(disruptions);
+        disruptions.clear();
+        return detected;
+    }
+
+    /** The result of the most recent token: the last one before the waiting run's, if any. */
+    private static AnomalyEvaluationResult mostRecent(List<AnomalyEvaluationResult> results) {
+        return results.size() > 1 ? results.get(results.size() - 2) : results.get(0);
+    }
+
+    private AnomalyEvaluationResult idleResult() {
+        String state = getCurrentState();
+        return nonAnomalyResult(EvaluationStatus.WAITING_FOR_MATCH, state, state, null,
+                "Waiting for the next token (the entry must be free first).");
+    }
+
+    /** Each guard transition from {@code state}, with the value and result of each clause (for diagnostics). */
+    synchronized List<GuardTransitionEvaluation> describeGuards(String state, Map<String, ?> observedValues) {
+        if (activeStateMachine == null) {
+            return List.of();
+        }
+        return runtimeInterpreter.describeGuardTransitions(
+                activeStateMachine, state, structuralModel, allStructuralModels, observedValues);
+    }
+
+    private static final String BOLD_GREEN = "\u001B[1;32m";
+    private static final String BOLD_RED = "\u001B[1;31m";
+    private static final String RESET = "\u001B[0m";
+
+    /**
+     * Formats each transition, then each of its clauses as "expected: [clause], found: [values]", in bold green if
+     * true, bold red otherwise.
+     */
+    static String formatGuards(List<GuardTransitionEvaluation> guards) {
+        StringBuilder text = new StringBuilder();
+        for (GuardTransitionEvaluation guard : guards) {
+            text.append(System.lineSeparator()).append("  ").append(guard.transitionName()).append(':');
+            for (GuardClauseEvaluation clause : guard.clauses()) {
+                boolean satisfied = clause.result() == GuardClauseEvaluation.Result.TRUE;
+                text.append(System.lineSeparator()).append("    ")
+                        .append(satisfied ? BOLD_GREEN : BOLD_RED)
+                        .append("expected: [").append(clause.expected())
+                        .append("], found: ")
+                        .append(clause.found().stream().toList())
+                        .append(RESET);
+            }
+        }
+        return text.toString();
     }
 
     @Override
     public synchronized AnomalyEvaluationResult checkTimeTransitions() {
-        return evaluateObservation(Collections.emptyMap());
+        // Only the time-based rules can change without a new observation: guards are evaluated when values arrive.
+        if (activeStateMachine == null || runs.isEmpty()) {
+            return nonAnomalyResult(EvaluationStatus.MODEL_NOT_LOADED, null, null, null,
+                    "No anomaly detection state machine has been loaded.");
+        }
+
+        long now = clockMillis.getAsLong();
+        List<AnomalyEvaluationResult> results = new ArrayList<>();
+        for (TokenRun tokenRun : List.copyOf(runs)) {
+            if (tokenRun.anomalyDetected || (tokenRun.waiting() && !tokenRun.armed)) {
+                continue;
+            }
+            run = tokenRun;
+            AnomalyEvaluationResult result = evaluateStateDurationLimit(now);
+            if (result == null) {
+                result = evaluateTimeoutTransitions(now);
+            }
+            if (result == null) {
+                result = waitingResult(now);
+            }
+            afterEvaluation(tokenRun);
+            results.add(result);
+        }
+        run = null;
+
+        return summarize(results);
     }
 
     @Override
     public synchronized String getCurrentState() {
-        return currentState;
+        TokenRun latest = latestToken();
+        return latest == null ? null : latest.currentState;
     }
 
     @Override
@@ -204,12 +384,40 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
 
     @Override
     public synchronized boolean isAnomalyDetected() {
-        return anomalyDetected;
+        return runs.stream().anyMatch(r -> r.anomalyDetected);
     }
 
     @Override
     public synchronized List<String> getTransitionHistory() {
-        return List.copyOf(transitionHistory);
+        TokenRun latest = latestToken();
+        return latest == null ? List.of() : List.copyOf(latest.transitionHistory);
+    }
+
+    @Override
+    public synchronized List<TokenRunState> getTokens() {
+        return runs.stream()
+                .filter(r -> !r.waiting())
+                .map(r -> new TokenRunState(r.token, r.currentState, List.copyOf(r.transitionHistory),
+                        r.anomalyDetected, anomalyIdOf(r)))
+                .toList();
+    }
+
+    private String anomalyIdOf(TokenRun tokenRun) {
+        return anomalyRuns.entrySet().stream()
+                .filter(entry -> entry.getValue() == tokenRun)
+                .map(Map.Entry::getKey)
+                .findFirst()
+                .orElse(null);
+    }
+
+    /** The most recent token's run, or the waiting run if no token is on the line. */
+    private TokenRun latestToken() {
+        for (int i = runs.size() - 1; i >= 0; i--) {
+            if (!runs.get(i).waiting()) {
+                return runs.get(i);
+            }
+        }
+        return runs.isEmpty() ? null : runs.get(runs.size() - 1);
     }
 
     private static final int MAX_CASCADED_TRANSITIONS_PER_OBSERVATION = 25;
@@ -220,22 +428,19 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
         AnomalyEvaluationResult settledResult = null;
 
         for (int step = 0; step < MAX_CASCADED_TRANSITIONS_PER_OBSERVATION; step++) {
-            AnomalyEvaluationResult durationConstraintResult =
-                    evaluateStateDurationLimit(now);
+            AnomalyEvaluationResult durationConstraintResult = evaluateStateDurationLimit(now);
 
             if (durationConstraintResult != null) {
                 return durationConstraintResult;
             }
 
-            AnomalyEvaluationResult timeoutTransitionResult =
-                    evaluateTimeoutTransitions(now);
+            AnomalyEvaluationResult timeoutTransitionResult = evaluateTimeoutTransitions(now);
 
             if (timeoutTransitionResult != null) {
                 return timeoutTransitionResult;
             }
 
-            AnomalyEvaluationResult guardTransitionResult =
-                    evaluateGuardTransitions(observedValues, now);
+            AnomalyEvaluationResult guardTransitionResult = evaluateGuardTransitions(observedValues, now);
 
             if (guardTransitionResult == null) {
                 return settledResult != null ? settledResult : waitingResult(now);
@@ -246,40 +451,42 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
             if (guardTransitionResult.status() != EvaluationStatus.TRANSITION_FIRED) {
                 return guardTransitionResult;
             }
+
+            // back in the initial state, the token left the line: its run ends, the waiting run takes the next token
+            if (!run.waiting() && activeStateMachine.initialState().equals(run.currentState)) {
+                return guardTransitionResult;
+            }
         }
 
-        anomalyDetected = true;
+        run.anomalyDetected = true;
 
         return anomalyResult(
                 EvaluationStatus.AMBIGUOUS_TRANSITION,
-                currentState,
-                currentState,
+                run.currentState,
+                run.currentState,
                 null,
                 "More than " + MAX_CASCADED_TRANSITIONS_PER_OBSERVATION
                         + " transitions cascaded from a single observation without settling"
                         + " - this looks like a cycle in the state machine rather than a real"
-                        + " sequence of transitions."
-        );
+                        + " sequence of transitions.");
     }
 
     private AnomalyEvaluationResult evaluateTimeoutTransitions(long now) {
-        List<Transition> elapsedTimeTransitions =
-                findElapsedRelativeTimeTransitions(now);
+        List<Transition> elapsedTimeTransitions = findElapsedRelativeTimeTransitions(now);
 
         if (elapsedTimeTransitions.size() == 1) {
             return fireTransition(elapsedTimeTransitions.get(0), now);
         }
 
         if (elapsedTimeTransitions.size() > 1) {
-            anomalyDetected = true;
+            run.anomalyDetected = true;
 
             return anomalyResult(
                     EvaluationStatus.AMBIGUOUS_TRANSITION,
-                    currentState,
-                    currentState,
+                    run.currentState,
+                    run.currentState,
                     null,
-                    "Several timeout transitions are enabled from state '" + currentState + "'."
-            );
+                    "Several timeout transitions are enabled from state '" + run.currentState + "'.");
         }
 
         return null;
@@ -287,25 +494,22 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
 
     private AnomalyEvaluationResult evaluateGuardTransitions(
             Map<String, Object> observedValues,
-            long now
-    ) {
-        List<Transition> enabledGuardTransitions =
-                findEnabledGuardTransitions(observedValues);
+            long now) {
+        List<Transition> enabledGuardTransitions = findEnabledGuardTransitions(observedValues);
 
         if (enabledGuardTransitions.size() == 1) {
             return fireTransition(enabledGuardTransitions.get(0), now);
         }
 
         if (enabledGuardTransitions.size() > 1) {
-            anomalyDetected = true;
+            run.anomalyDetected = true;
 
             return anomalyResult(
                     EvaluationStatus.AMBIGUOUS_TRANSITION,
-                    currentState,
-                    currentState,
+                    run.currentState,
+                    run.currentState,
                     null,
-                    "Several guard-based transitions are enabled from state '" + currentState + "'."
-            );
+                    "Several guard-based transitions are enabled from state '" + run.currentState + "'.");
         }
 
         return null;
@@ -313,7 +517,7 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
 
     private AnomalyEvaluationResult waitingResult(long now) {
         Long remainingMillis = millisUntilNextRelativeTimeTransition(now);
-        String message = "No complete guard is satisfied yet from state '" + currentState + "'.";
+        String message = "No complete guard is satisfied yet from state '" + run.currentState + "'.";
 
         if (remainingMillis != null) {
             message += " Timeout may occur in " + remainingMillis + " ms.";
@@ -321,18 +525,17 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
 
         return nonAnomalyResult(
                 EvaluationStatus.WAITING_FOR_MATCH,
-                currentState,
-                currentState,
+                run.currentState,
+                run.currentState,
                 null,
-                message
-        );
+                message);
     }
 
     private List<Transition> relativeTimeTransitionsFromCurrentState() {
         List<Transition> transitions = new ArrayList<>();
 
         for (Transition transition : activeStateMachine.transitions()) {
-            if (!transition.sourceState().equals(currentState)) {
+            if (!transition.sourceState().equals(run.currentState)) {
                 continue;
             }
 
@@ -356,17 +559,29 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
         return elapsedTransitions;
     }
 
+    /** The enabled guard transitions of the run, except into a state another token is in (it must leave first). */
     private List<Transition> findEnabledGuardTransitions(Map<String, ?> observedValues) {
         return runtimeInterpreter.findEnabledGuardTransitions(
-                activeStateMachine, currentState, structuralModel, allStructuralModels, observedValues);
+                        activeStateMachine, run.currentState, structuralModel, allStructuralModels, observedValues)
+                .stream()
+                .filter(transition -> !occupiedByAnotherToken(transition.targetState()))
+                .toList();
+    }
+
+    private boolean occupiedByAnotherToken(String state) {
+        if (activeStateMachine.initialState().equals(state)) {
+            return false;
+        }
+        return runs.stream().anyMatch(other -> other != run && !other.anomalyDetected
+                && state.equals(other.currentState));
     }
 
     private AnomalyEvaluationResult fireTransition(Transition firedTransition, long now) {
-        String previousState = currentState;
+        String previousState = run.currentState;
         String targetState = firedTransition.targetState();
 
         if (RuntimeInterpreterUtils.isRelativeTimeTransition(firedTransition)) {
-            anomalyDetected = true;
+            run.anomalyDetected = true;
 
             return anomalyResult(
                     EvaluationStatus.ANOMALY_DETECTED,
@@ -375,26 +590,24 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
                     firedTransition.name(),
                     "Timeout deviation. State '" + previousState
                             + "' remained active until relative-time transition '"
-                            + firedTransition.name() + "' fired."
-            );
+                            + firedTransition.name() + "' fired.");
         }
 
-        currentState = targetState;
-        stateEnteredAtMillis = now;
+        run.currentState = targetState;
+        run.stateEnteredAtMillis = now;
 
-        addToTransitionHistory(currentState);
+        addToTransitionHistory(run.currentState);
 
-        logger.info("Transition '{}' fired: {} -> {}",
-                firedTransition.name(), previousState, currentState);
+        logger.info("{}: transition '{}' fired: {} -> {}",
+                describe(run), firedTransition.name(), previousState, run.currentState);
 
         return nonAnomalyResult(
                 EvaluationStatus.TRANSITION_FIRED,
                 previousState,
-                currentState,
+                run.currentState,
                 firedTransition.name(),
                 "Transition '" + firedTransition.name() + "' fired: "
-                        + previousState + " -> " + currentState
-        );
+                        + previousState + " -> " + run.currentState);
     }
 
     private boolean hasRelativeTimeElapsed(Transition transition, long now) {
@@ -404,7 +617,7 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
             return false;
         }
 
-        long elapsedMillis = now - stateEnteredAtMillis;
+        long elapsedMillis = now - run.stateEnteredAtMillis;
         return elapsedMillis >= delayMillis;
     }
 
@@ -418,7 +631,7 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
                 continue;
             }
 
-            long elapsedMillis = now - stateEnteredAtMillis;
+            long elapsedMillis = now - run.stateEnteredAtMillis;
             long remainingMillis = Math.max(0L, delayMillis - elapsedMillis);
 
             if (shortestRemainingMillis == null || remainingMillis < shortestRemainingMillis) {
@@ -434,42 +647,37 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
             return null;
         }
 
-        long elapsedMillis = now - stateEnteredAtMillis;
+        long elapsedMillis = now - run.stateEnteredAtMillis;
 
-        for (ConstraintUsage constraintUsage
-                : structuralModel.findConstraintUsagesByType("StateDurationLimit")) {
+        for (ConstraintUsage constraintUsage : structuralModel.findConstraintUsagesByType("StateDurationLimit")) {
 
-            String constrainedStateName =
-                    constraintUsage.inputValues().get("constrainedStateName");
+            String constrainedStateName = constraintUsage.inputValues().get("constrainedStateName");
 
-            if (!RuntimeInterpreterUtils.valuesMatch(constrainedStateName, currentState)) {
+            if (!RuntimeInterpreterUtils.valuesMatch(constrainedStateName, run.currentState)) {
                 continue;
             }
 
-            String maxDurationExpression =
-                    constraintUsage.inputValues().get("maxDuration");
+            String maxDurationExpression = constraintUsage.inputValues().get("maxDuration");
 
-            Long maxDurationMillis =
-                    RuntimeInterpreterUtils.parseDurationMillisOrNull(maxDurationExpression);
+            Long maxDurationMillis = RuntimeInterpreterUtils.parseDurationMillisOrNull(maxDurationExpression);
 
             if (maxDurationMillis == null) {
                 continue;
             }
 
             if (elapsedMillis >= maxDurationMillis) {
-                anomalyDetected = true;
+                run.anomalyDetected = true;
 
                 return anomalyResult(
                         EvaluationStatus.ANOMALY_DETECTED,
-                        currentState,
-                        currentState,
+                        run.currentState,
+                        run.currentState,
                         constraintUsage.name(),
                         "State duration constraint '" + constraintUsage.name()
-                                + "' violated. State '" + currentState
+                                + "' violated. State '" + run.currentState
                                 + "' has been active for " + elapsedMillis
                                 + " ms, but the maximum allowed duration is "
-                                + maxDurationMillis + " ms."
-                );
+                                + maxDurationMillis + " ms.");
             }
         }
 
@@ -500,10 +708,14 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
             return;
         }
 
-        if (transitionHistory.isEmpty()
-                || !transitionHistory.get(transitionHistory.size() - 1).equals(state)) {
-            transitionHistory.add(state);
+        List<String> history = run.transitionHistory;
+        if (history.isEmpty() || !history.get(history.size() - 1).equals(state)) {
+            history.add(state);
         }
+    }
+
+    private static String describe(TokenRun tokenRun) {
+        return tokenRun.waiting() ? "waiting run" : "token #" + tokenRun.token;
     }
 
     private String activeStateMachineName() {
@@ -516,8 +728,7 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
             String currentState,
             String transitionName,
             String message,
-            AnomalyContext anomalyContext
-    ) {
+            AnomalyContext anomalyContext) {
         return new AnomalyEvaluationResult(
                 status,
                 activeStateMachineId,
@@ -526,8 +737,7 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
                 currentState,
                 transitionName,
                 message,
-                anomalyContext
-        );
+                anomalyContext);
     }
 
     private AnomalyEvaluationResult anomalyResult(
@@ -535,30 +745,32 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
             String previousState,
             String currentState,
             String transitionName,
-            String message
-    ) {
+            String message) {
         String affectedComponent = StateMachineInferenceUtils.inferAffectedComponent(activeStateMachine, previousState);
 
         if (affectedComponent == null) {
             logger.warn(
                     "Could not infer a unique affectedComponent from source state '{}' in state machine '{}'. Replanning will receive a null component.",
                     previousState,
-                    activeStateMachineId
-            );
+                    activeStateMachineId);
         }
 
+        String tokenMessage = run.waiting() ? message : "Token #" + run.token + ": " + message;
+
+        String anomalyId = UUID.randomUUID().toString();
+        anomalyRuns.put(anomalyId, run);
+
         AnomalyContext anomalyContext = new AnomalyContext(
-                UUID.randomUUID().toString(),
+                anomalyId,
                 Instant.ofEpochMilli(clockMillis.getAsLong()),
                 activeStateMachineName(),
                 previousState,
                 affectedComponent,
                 previousState,
                 currentState,
-                message
-        );
+                tokenMessage);
 
-        return buildResult(status, previousState, currentState, transitionName, message, anomalyContext);
+        return buildResult(status, previousState, currentState, transitionName, tokenMessage, anomalyContext);
     }
 
     private AnomalyEvaluationResult nonAnomalyResult(
@@ -566,8 +778,7 @@ public class AnomalyDetectionImpl implements AnomalyDetection {
             String previousState,
             String currentState,
             String transitionName,
-            String message
-    ) {
+            String message) {
         return buildResult(status, previousState, currentState, transitionName, message, null);
     }
 }

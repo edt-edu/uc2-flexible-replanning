@@ -61,7 +61,6 @@ package token_definitions {
 
             in token : Token;
             in tokenSequencer : TokenSequencer;
-            in encoderTolerance : Positive;
 
             in vgr1 : VacuumGripperSystem::VacuumGripper::VacuumGripperMachine;
             in vgr2 : VacuumGripperSystem::VacuumGripper::VacuumGripperMachine;
@@ -118,11 +117,8 @@ package token_definitions {
                 accept when sl.sensor_SL_blue == true
                     and vgr1.vacuumActCompressorOn == true
                     and vgr1.vacuumActValve == true
-                    and IsInTolerance(
-                        vgr1.3DPosition,
-                        vgr1.expected3DPositionBlueOutput,
-                        encoderTolerance
-                    )
+                    and IsInTolerance(vgr1.rotEncoder, 2175, 100)
+                    and IsInTolerance(vgr1.armEncoder, 1500, 100)
                 then TokenPickedUpByVGR1;
 
             transition Token_t2White
@@ -130,11 +126,8 @@ package token_definitions {
                 accept when sl.sensor_SL_white == true
                     and vgr1.vacuumActCompressorOn == true
                     and vgr1.vacuumActValve == true
-                    and IsInTolerance(
-                        vgr1.3DPosition,
-                        vgr1.expected3DPositionWhiteOutput,
-                        encoderTolerance
-                    )
+                    and IsInTolerance(vgr1.rotEncoder, 2400, 100)
+                    and IsInTolerance(vgr1.armEncoder, 500, 100)
                 then TokenPickedUpByVGR1;
 
             transition Token_t2Red
@@ -142,11 +135,8 @@ package token_definitions {
                 accept when sl.sensor_SL_red == true
                     and vgr1.vacuumActCompressorOn == true
                     and vgr1.vacuumActValve == true
-                    and IsInTolerance(
-                        vgr1.3DPosition,
-                        vgr1.expected3DPositionRedOutput,
-                        encoderTolerance
-                    )
+                    and IsInTolerance(vgr1.rotEncoder, 2270, 100)
+                    and IsInTolerance(vgr1.armEncoder, 970, 100)
                 then TokenPickedUpByVGR1;
 
             transition Token_t3
@@ -167,11 +157,8 @@ package token_definitions {
                 accept when cb.conveyorSensSwap == true
                     and vgr2.vacuumActCompressorOn == true
                     and vgr2.vacuumActValve == true
-                    and IsInTolerance(
-                        vgr2.3DPosition,
-                        vgr2.expected3DPositionCBSwap,
-                        encoderTolerance
-                    )
+                    and IsInTolerance(vgr2.rotEncoder, 2650, 100)
+                    and IsInTolerance(vgr2.armEncoder, 1350, 100)
                 then TokenPickedUpByVGR2;
 
             transition Token_t6
@@ -198,15 +185,16 @@ package token_definitions {
             in maxDuration :> ISQ::time;
         }
 
-
+        // The token doesn't get from the feed to the swap: it stays on the feed, or stops between the light barriers
         assert constraint ConveyorBeltFeedDepartureLimit : StateDurationLimit {
             in constrainedStateName = "TokenDroppedOffAtConveyorBeltFeed";
-            in maxDuration = 10 [s];
+            in maxDuration = 25 [s];
         }
 
-        assert constraint ConveyorBeltSwapArrivalLimit : StateDurationLimit {
+        // The token doesn't leave the swap: VGR2 doesn't pick it
+        assert constraint ConveyorBeltSwapDepartureLimit : StateDurationLimit {
             in constrainedStateName = "TokenAtConveyorBeltSwap";
-            in maxDuration = 10 [s];
+            in maxDuration = 20 [s];
         }
     }
 }

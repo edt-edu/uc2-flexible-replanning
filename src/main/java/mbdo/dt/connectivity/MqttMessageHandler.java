@@ -8,20 +8,26 @@ import mbdo.dt.connectivity.GatewayServiceConfiguration.MqttInfluxDbRecording;
 import mbdo.dt.data.DigitalShadow;
 import mbdo.dt.domain.DataRequest;
 import mbdo.dt.orchestrator.DtEngine;
+import mbdo.dt.telemetry.MachineTelemetryBridge;
 import mbdo.dt.utils.TimestampParsingUtils;
 import mbdo.dt.utils.TypeDetector;
 import org.eclipse.paho.client.mqttv3.MqttTopic;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.integration.mqtt.support.MqttHeaders;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageHandler;
 import org.springframework.messaging.MessagingException;
 import org.springframework.stereotype.Component;
 
+import jakarta.annotation.PreDestroy;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 @Component
 public class MqttMessageHandler implements MessageHandler {
@@ -30,43 +36,101 @@ public class MqttMessageHandler implements MessageHandler {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private final GatewayService gatewayService;
-    private final MqttOutboundGateway mqttOutbound;
     private final DigitalShadow digitalShadow;
     private final DtEngine dtEngine;
+    private final MachineTelemetryBridge machineTelemetryBridge;
+    /**
+     * Runs the DT evaluation and the InfluxDB recording, in arrival order, off the MQTT callback thread: they are
+     * slower than the message rate of a moving machine, and the shopfloor UI must not wait for them.
+     */
+    private final Executor dtProcessingExecutor;
 
+    @Autowired
     public MqttMessageHandler(
             GatewayService gatewayService,
-            @Qualifier("mqttOutboundGateway") MqttOutboundGateway mqttOutbound,
             DigitalShadow digitalShadow,
-            DtEngine dtEngine
+            DtEngine dtEngine,
+            MachineTelemetryBridge machineTelemetryBridge
+    ) {
+        this(gatewayService, digitalShadow, dtEngine, machineTelemetryBridge,
+                Executors.newSingleThreadExecutor(runnable -> {
+                    Thread thread = new Thread(runnable, "dt-processing");
+                    thread.setDaemon(true);
+                    return thread;
+                }));
+    }
+
+    MqttMessageHandler(
+            GatewayService gatewayService,
+            DigitalShadow digitalShadow,
+            DtEngine dtEngine,
+            MachineTelemetryBridge machineTelemetryBridge,
+            Executor dtProcessingExecutor
     ) {
         this.gatewayService = gatewayService;
-        this.mqttOutbound = mqttOutbound;
         this.digitalShadow = digitalShadow;
         this.dtEngine = dtEngine;
+        this.machineTelemetryBridge = machineTelemetryBridge;
+        this.dtProcessingExecutor = dtProcessingExecutor;
+    }
+
+    @PreDestroy
+    void shutdown() {
+        if (dtProcessingExecutor instanceof ExecutorService executorService) {
+            executorService.shutdownNow();
+        }
     }
 
     @Override
     public void handleMessage(Message<?> message) throws MessagingException {
         String topic = message.getHeaders().get(MqttHeaders.RECEIVED_TOPIC, String.class);
 
+        String payload = extractPayload(message.getPayload());
+
         Boolean retained = message.getHeaders().get(MqttHeaders.RECEIVED_RETAINED, Boolean.class);
         if (Boolean.TRUE.equals(retained)) {
-            logger.debug("Ignoring retained MQTT message on topic '{}' (not a live publish)", topic);
+            // Last known value, delivered on (re)subscription: it only restores what the shopfloor UI shows.
+            // It is not a live observation, so it is neither evaluated by the DT nor recorded again in InfluxDB.
+            logger.debug("Retained MQTT message on topic '{}' used for the shopfloor UI state only", topic);
+            try {
+                applyMachineTelemetry(topic, payload);
+            } catch (RuntimeException e) {
+                logger.warn("Failed to process retained MQTT message on topic '{}': {}", topic, e.getMessage());
+            }
             return;
         }
 
-        String payload = extractPayload(message.getPayload());
-
         try {
-            applyCloneRules(topic, payload);
-            applyMqttToInfluxDBRules(topic, payload);
+            applyMachineTelemetry(topic, payload);
         } catch (RuntimeException e) {
             logger.warn("Failed to process MQTT message on topic '{}': {}", topic, e.getMessage());
         }
+
+        dtProcessingExecutor.execute(() -> {
+            try {
+                applyDtMappingRules(topic, payload);
+                applyMqttToInfluxDBRules(topic, payload);
+            } catch (RuntimeException e) {
+                logger.warn("Failed to process MQTT message on topic '{}': {}", topic, e.getMessage());
+            }
+        });
     }
 
-    protected void applyCloneRules(String topic, String payload) {
+    /** Pushes every platform gateway measurement to the shopfloor UI, whether or not the DT model uses it. */
+    protected void applyMachineTelemetry(String topic, String payload) {
+        String filter = gatewayService.getMachineTelemetryTopicFilter();
+        if (topic == null || filter == null || !MqttTopic.isMatched(filter, topic)) {
+            return;
+        }
+
+        Measurement measurement = parseMeasurement(topic, payload);
+        if (measurement != null) {
+            machineTelemetryBridge.onGatewayMeasurement(topic, measurement.value(), measurement.timestamp());
+        }
+    }
+
+    /** Maps gateway measurements onto SysML model attributes and dispatches them to the DT engine. */
+    protected void applyDtMappingRules(String topic, String payload) {
         if (topic == null) {
             return;
         }
@@ -83,11 +147,7 @@ public class MqttMessageHandler implements MessageHandler {
                 continue;
             }
 
-            if (eventGroup.mqttSourcePrefix() == null || eventGroup.mqttTargetPrefix() == null) {
-                continue;
-            }
-
-            if (eventGroup.dtEvents() == null) {
+            if (eventGroup.mqttSourcePrefix() == null || eventGroup.dtEvents() == null) {
                 continue;
             }
 
@@ -95,11 +155,7 @@ public class MqttMessageHandler implements MessageHandler {
                 String ruleSourceTopic = eventGroup.mqttSourcePrefix() + dtEvent.mqttSourceTopic();
 
                 if (MqttTopic.isMatched(ruleSourceTopic, topic)) {
-                    String targetTopic = eventGroup.mqttTargetPrefix() + dtEvent.mqttTargetTopic();
-
-                    mqttOutbound.sendToMqtt(targetTopic, payload);
-
-                    DataRequest request = buildDataRequest(targetTopic, payload);
+                    DataRequest request = buildDataRequest(topic, dtEvent.mqttTargetTopic(), payload);
                     if (request != null) {
                         dtEngine.dispatch(request);
                     }
@@ -133,18 +189,35 @@ public class MqttMessageHandler implements MessageHandler {
         }
     }
 
-    private DataRequest buildDataRequest(String targetTopic, String payload) {
+    private record Measurement(Object value, Long timestamp) {
+    }
+
+    /**
+     * @param modelTarget "&lt;SysML model&gt;/&lt;attribute path&gt;", e.g. "TokenLocation/vgr2/vacuumActValve"
+     *                    becomes model "TokenLocation" and attribute "vgr2.vacuumActValve".
+     */
+    private DataRequest buildDataRequest(String sourceTopic, String modelTarget, String payload) {
+        String[] parts = modelTarget == null ? new String[0] : modelTarget.split("/");
+
+        if (parts.length < 2) {
+            logger.warn("Mapping target has fewer than 2 segments, " +
+                    "cannot extract model/attribute: {}", modelTarget);
+            return null;
+        }
+
+        Measurement measurement = parseMeasurement(sourceTopic, payload);
+        if (measurement == null) {
+            return null;
+        }
+
+        String modelName = parts[0];
+        String attributeName = String.join(".", Arrays.copyOfRange(parts, 1, parts.length));
+
+        return new DataRequest(sourceTopic, modelName, attributeName, measurement.value(), measurement.timestamp());
+    }
+
+    private Measurement parseMeasurement(String topic, String payload) {
         try {
-            String[] parts = targetTopic.split("/");
-
-            if (parts.length < 3) {
-                logger.warn("Target topic has fewer than 3 segments, " +
-                        "cannot extract model/attribute: {}", targetTopic);
-                return null;
-            }
-
-            String modelName = parts[1];
-            String attributeName = extractAttributeNameFromTargetTopic(parts);
             JsonNode json = OBJECT_MAPPER.readTree(payload);
 
             Object value = null;
@@ -160,37 +233,17 @@ public class MqttMessageHandler implements MessageHandler {
                 } else {
                     timestamp = TimestampParsingUtils.parseEpochMillisOrNull(tsNode.asText());
                     if (timestamp == null) {
-                        logger.debug("Unparseable timestamp ignored for topic: {}",
-                                targetTopic);
+                        logger.debug("Unparseable timestamp ignored for topic: {}", topic);
                     }
                 }
             }
 
-            return new DataRequest(targetTopic, modelName, attributeName, value, timestamp);
+            return new Measurement(value, timestamp);
 
         } catch (Exception e) {
-            logger.warn("Failed to build DataRequest for topic '{}': {}",
-                    targetTopic, e.getMessage());
+            logger.warn("Failed to parse payload on topic '{}': {}", topic, e.getMessage());
             return null;
         }
-    }
-
-    private String extractAttributeNameFromTargetTopic(String[] parts) {
-        if (parts.length == 3) {
-            return parts[2];
-        }
-
-        StringBuilder attributeName = new StringBuilder();
-
-        for (int i = 2; i < parts.length; i++) {
-            if (attributeName.length() > 0) {
-                attributeName.append(".");
-            }
-
-            attributeName.append(parts[i]);
-        }
-
-        return attributeName.toString();
     }
 
     private String extractPayload(Object payload) {

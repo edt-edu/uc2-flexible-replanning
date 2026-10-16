@@ -125,9 +125,7 @@ public final class RuntimeInterpreterUtils {
 
             return Long.parseLong(value);
         } catch (NumberFormatException e) {
-            throw new IllegalArgumentException(
-                    "Cannot resolve '" + value + "' - no observed value for this attribute yet."
-            );
+            throw new UnobservedAttributeException(value);
         }
     }
 
