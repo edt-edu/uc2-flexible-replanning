@@ -2,7 +2,7 @@ import { Injectable, NgZone } from '@angular/core';
 import { Observable, Subject } from 'rxjs';
 
 const API_URL = '/api';
-import { fromMachineUpdate, MachineStateUpdate } from '../models/machine-update.model';
+import { fromMachineAttributeUpdate, MachineAttributeUpdate } from '../models/machine-attribute.model';
 import { fromTokenLocation, TokenLocation } from '../models/token-location.model';
 
 @Injectable({
@@ -10,18 +10,15 @@ import { fromTokenLocation, TokenLocation } from '../models/token-location.model
 })
 export class MachineTelemetryService {
     private eventSource: EventSource | null = null;
-    private readonly machineUpdateSubject = new Subject<MachineStateUpdate>();
+    private readonly machineUpdateSubject = new Subject<MachineAttributeUpdate>();
     private readonly tokenUpdateSubject = new Subject<TokenLocation>();
-    /** Latest not-yet-rendered update of each machine, emitted once per animation frame. */
-    private readonly pendingMachineUpdates = new Map<string, MachineStateUpdate>();
-    private animationFrameId: number | null = null;
 
     /** Inferred token location: the current one on each (re)connection, then every change. */
     readonly tokenUpdates$: Observable<TokenLocation> = this.tokenUpdateSubject.asObservable();
 
     constructor(private readonly ngZone: NgZone) { }
 
-    connectToMachineStream(): Observable<MachineStateUpdate> {
+    connectToMachineStream(): Observable<MachineAttributeUpdate> {
         if (this.eventSource) {
             this.eventSource.close();
         }
@@ -32,15 +29,13 @@ export class MachineTelemetryService {
         const eventSource = new EventSource(url);
         this.eventSource = eventSource;
 
-        // Outside Angular, so that a message does not trigger a change detection: machine updates are rendered once
-        // per animation frame instead (see flushMachineUpdates).
-        this.ngZone.runOutsideAngular(() => eventSource.addEventListener('machine-update', (event: MessageEvent) => {
+        // Outside Angular, so that a message does not trigger a change detection: the shopfloor view draws the machines
+        // once per animation frame.
+        this.ngZone.runOutsideAngular(() => eventSource.addEventListener('machine-attribute', (event: MessageEvent) => {
             try {
-                const machineUpdate = fromMachineUpdate(JSON.parse(event.data));
-                this.pendingMachineUpdates.set(machineUpdate.machineId, machineUpdate);
-                this.animationFrameId ??= requestAnimationFrame(() => this.flushMachineUpdates());
+                this.machineUpdateSubject.next(fromMachineAttributeUpdate(JSON.parse(event.data)));
             } catch (error) {
-                console.error('[MachineTelemetryService] Error parsing machine update:', error);
+                console.error('[MachineTelemetryService] Error parsing machine attribute:', error);
             }
         }));
 
@@ -79,20 +74,7 @@ export class MachineTelemetryService {
         return this.machineUpdateSubject.asObservable();
     }
 
-    /** Renders the latest state of each machine that changed since the previous frame, in one change detection. */
-    private flushMachineUpdates(): void {
-        this.animationFrameId = null;
-        const updates = [...this.pendingMachineUpdates.values()];
-        this.pendingMachineUpdates.clear();
-        this.ngZone.run(() => updates.forEach(update => this.machineUpdateSubject.next(update)));
-    }
-
     disconnectFromMachineStream(): void {
-        if (this.animationFrameId !== null) {
-            cancelAnimationFrame(this.animationFrameId);
-            this.animationFrameId = null;
-        }
-        this.pendingMachineUpdates.clear();
         if (this.eventSource) {
             this.eventSource.close();
             this.eventSource = null;

@@ -1,0 +1,43 @@
+{
+  "name": "RennesFactory_Setup1",
+  "xSize": 1500,
+  "ySize": 1500,
+  "positions": [
+    { "id": "CBSystemModel", "name": "Conveyor Belt", "kind": "CB", "x": 730, "y": 1010, "degrees": 180 },
+    { "id": "HBWSystemModel", "name": "High Bay Warehouse", "kind": "HBW", "x": 460, "y": 150, "degrees": 0, "telemetryId": "HBSystemModel" },
+    { "id": "SLSystemModel", "name": "Sorting Line", "kind": "SLC", "x": 150, "y": 1350, "degrees": 270 },
+    { "id": "MPSystemModel", "name": "Multi Processing Station", "kind": "MPO", "x": 460, "y": 470, "degrees": 90 },
+    {
+      "id": "VGRSystemModel_02", "name": "Vacuum Gripper Robot 02", "kind": "VGR", "x": 493, "y": 624, "degrees": 0,
+      "armCalibration": [
+        { "name": "HBW", "rotationCounts": 1010, "horizontalCounts": 740, "target": "inputBarrierHBWSystemModel" },
+        { "name": "MPS_OUTPUT", "rotationCounts": 1480, "horizontalCounts": 1720, "target": "sensorOutMPSystemModel" },
+        { "name": "MPS_INPUT", "rotationCounts": 2050, "horizontalCounts": 1890, "target": "sensorInMPSystemModel" },
+        { "name": "ALT_CB", "rotationCounts": 2650, "horizontalCounts": 1350, "target": "sensorSwapCBSystemModel" }
+      ]
+    },
+    {
+      "id": "VGRSystemModel_01", "name": "Vacuum Gripper Robot 01", "kind": "VGR", "x": 660, "y": 1020, "degrees": 90,
+      "armCalibration": [
+        { "name": "ALT_CB", "rotationCounts": 1360, "horizontalCounts": 1900, "target": "sensorSwapCBSystemModel" },
+        { "name": "CB", "rotationCounts": 1860, "horizontalCounts": 1460, "target": "sensorFeedCBSystemModel" },
+        { "name": "SL_OUTPUT_BLUE", "rotationCounts": 2175, "horizontalCounts": 1500, "target": "sortingLineSensBlueLightBarrierSLSystemModel" },
+        { "name": "SL_OUTPUT_RED", "rotationCounts": 2270, "horizontalCounts": 970, "target": "sortingLineSensRedLightBarrierSLSystemModel" },
+        { "name": "SL_OUTPUT_WHITE", "rotationCounts": 2400, "horizontalCounts": 500, "target": "sortingLineSensWhiteLightBarrierSLSystemModel" },
+        { "name": "SL_INPUT", "rotationCounts": 2900, "horizontalCounts": 1670, "target": "sortingLineSensInputLightBarrierSLSystemModel" }
+      ]
+    }
+  ],
+  "tokenLocations": {
+    "sl-input": "sortingLineSensInputLightBarrierSLSystemModel",
+    "sl-white": "sortingLineSensWhiteLightBarrierSLSystemModel",
+    "sl-red": "sortingLineSensRedLightBarrierSLSystemModel",
+    "sl-blue": "sortingLineSensBlueLightBarrierSLSystemModel",
+    "vgr1": "vgrEndEffectorVGRSystemModel_01",
+    "cb-feed": "sensorFeedCBSystemModel",
+    "cb-swap": "sensorSwapCBSystemModel",
+    "vgr2": "vgrEndEffectorVGRSystemModel_02",
+    "mps-input": "sensorInMPSystemModel",
+    "mps-output": "sensorOutMPSystemModel"
+  }
+}

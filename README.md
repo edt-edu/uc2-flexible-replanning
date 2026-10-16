@@ -64,3 +64,22 @@ gradle bootRun --args='--configuration.path=../../../../dt-setups/VIRTUAL_Setups
 ```bash
 ./mvnw spring-boot:run
 ```
+
+### Shopfloor view (frontend)
+
+The 2D shopfloor map of the frontend is drawn by the `@mbdo/machines-svg-map` library (`machines-svg-map`, next
+to this repository in the parent folder). Until it is packaged, a copy of its browser sources is in
+`frontend/src/vendor/machines-svg-map` (imported as `@mbdo/machines-svg-map` through a `paths` alias of
+`frontend/tsconfig.json`), with the adaptations to upstream listed in its `README.md`:
+
+- the layout is `frontend/public/assets/shopfloor-layout.json`: machine positions, gateway machine names
+  (`telemetryId`), VGR arm calibration (named positions -> SVG element) and token locations;
+- the backend forwards every gateway measurement as is on `GET /api/machines/stream` (`machine-attribute` events:
+  `machineId`, `attribute`, `value`, `timestamp`), and replays the latest value of each attribute to a new client;
+  the library knows how each raw attribute is drawn (active-low light barriers, encoder counts, ...).
+
+```bash
+cd frontend
+npm install
+npm start        # http://localhost:4200, /api proxied to the backend
+```

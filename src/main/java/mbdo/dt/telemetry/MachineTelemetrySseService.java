@@ -1,6 +1,6 @@
 package mbdo.dt.telemetry;
 
-import mbdo.dt.telemetry.dto.MachineStateUpdateResponse;
+import mbdo.dt.telemetry.dto.MachineAttributeUpdate;
 import mbdo.dt.telemetry.dto.TokenLocationResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,22 +22,25 @@ public class MachineTelemetrySseService {
 
     private static final Logger logger = LoggerFactory.getLogger(MachineTelemetrySseService.class);
 
+    /** Event carrying a {@link MachineAttributeUpdate}. */
+    static final String MACHINE_ATTRIBUTE_EVENT = "machine-attribute";
+
     private final List<SseEmitter> emitters = new CopyOnWriteArrayList<>();
-    private final MachineStateRegistryService machineStateRegistry;
+    private final MachineAttributeRegistryService machineAttributeRegistry;
 
     /**
-     * Latest not-yet-sent state of each machine. A moving machine changes state far more often than a browser can
-     * draw, so only the latest state is sent, every flush interval: the UI shows live values instead of replaying a
-     * backlog.
+     * Latest not-yet-sent value of each machine attribute. A moving machine changes far more often than a browser can
+     * draw, so only the latest value of each attribute is sent, every flush interval: the UI shows live values instead
+     * of replaying a backlog.
      */
-    private final Map<String, MachineStateUpdateResponse> pendingMachineUpdates = new ConcurrentHashMap<>();
+    private final Map<String, MachineAttributeUpdate> pendingMachineUpdates = new ConcurrentHashMap<>();
     private final ScheduledExecutorService flushScheduler;
 
     public MachineTelemetrySseService(
-            MachineStateRegistryService machineStateRegistry,
+            MachineAttributeRegistryService machineAttributeRegistry,
             @Value("${telemetry.sse-flush-interval-ms:33}") long flushIntervalMs
     ) {
-        this.machineStateRegistry = machineStateRegistry;
+        this.machineAttributeRegistry = machineAttributeRegistry;
         this.flushScheduler = Executors.newSingleThreadScheduledExecutor(runnable -> {
             Thread thread = new Thread(runnable, "machine-sse-flush");
             thread.setDaemon(true);
@@ -67,10 +70,10 @@ public class MachineTelemetrySseService {
             emitter.send(SseEmitter.event()
                     .name("connected")
                     .data("Machine telemetry SSE connection established"));
-            // a (re)loaded page starts from the latest known machine states, not from the defaults
-            for (MachineStateUpdateResponse snapshot : machineStateRegistry.snapshots()) {
+            // a (re)loaded page starts from the latest known machine attributes, not from the defaults
+            for (MachineAttributeUpdate snapshot : machineAttributeRegistry.snapshots()) {
                 emitter.send(SseEmitter.event()
-                        .name("machine-update")
+                        .name(MACHINE_ATTRIBUTE_EVENT)
                         .data(snapshot));
             }
         } catch (Exception e) {
@@ -81,15 +84,15 @@ public class MachineTelemetrySseService {
         return emitter;
     }
 
-    public void broadcastMachineUpdate(MachineStateUpdateResponse stateUpdate) {
-        pendingMachineUpdates.put(stateUpdate.getMachineId(), stateUpdate);
+    public void broadcastMachineAttribute(MachineAttributeUpdate update) {
+        pendingMachineUpdates.put(update.machineId() + "/" + update.attribute(), update);
     }
 
     void flushPendingMachineUpdates() {
-        for (String machineId : pendingMachineUpdates.keySet()) {
-            MachineStateUpdateResponse stateUpdate = pendingMachineUpdates.remove(machineId);
-            if (stateUpdate != null) {
-                broadcast("machine-update", stateUpdate);
+        for (String key : pendingMachineUpdates.keySet()) {
+            MachineAttributeUpdate update = pendingMachineUpdates.remove(key);
+            if (update != null) {
+                broadcast(MACHINE_ATTRIBUTE_EVENT, update);
             }
         }
     }

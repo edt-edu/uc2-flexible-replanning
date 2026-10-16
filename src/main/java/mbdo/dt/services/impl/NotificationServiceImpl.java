@@ -36,16 +36,18 @@ public class NotificationServiceImpl implements NotificationService {
             return false;
         }
         Optional<ReplanningIncidentResponse> incident = registryService.findByAnomaly(context.anomalyId());
-        if (incident.isEmpty()) {
+        ReplanningPlan plan = context.replanningPlan();
+        if (plan == null) {
+            if (incident.isPresent()) {
+                // already notified
+                return incident.get().getResolvedAt() == null;
+            }
             journal.recordAnomaly(context);
             sseService.broadcastOpened(registryService.openIncident(context));
             return true;
         }
-        ReplanningPlan plan = context.replanningPlan();
-        if (plan == null) {
-            // already notified
-            return incident.get().getResolvedAt() == null;
-        }
+        // a plan only updates an incident: one that is no longer known (e.g. replaced by another disruption's) isn't
+        // opened again
         Optional<ReplanningIncidentResponse> updated = registryService.attachPlan(context.anomalyId(), plan);
         updated.ifPresent(sseService::broadcastUpdated);
         // dropped: the incident was closed meanwhile, this plan is the replanning's last one

@@ -41,13 +41,11 @@ public class ReplanningElementExtractor {
     private static final Pattern STRING_ITEM = Pattern.compile("\"([^\"]*)\"");
 
     /**
-     * The replanning elements of a SysML model.
+     * The replanning strategies: {@code part <name> : ReplanningStrategy { ... }}.
      *
      * @param content the model, cleaned ({@link SysMLParserUtils#cleanContent})
-     * @throws IllegalArgumentException if a replanning element is invalid
      */
-    public SysMLReplanningModel extract(String content) {
-
+    public List<Strategy> extractStrategies(String content) {
         List<Strategy> strategies = new ArrayList<>();
         Matcher strategy = STRATEGY.matcher(content);
         while (strategy.find()) {
@@ -61,8 +59,17 @@ public class ReplanningElementExtractor {
                     stringList(attributes.get("migrations")),
                     SysMLParserUtils.cleanValue(attributes.get("recoveryStrategy"))));
         }
+        return List.copyOf(strategies);
+    }
 
-        Map<String, Migration> migrations = new LinkedHashMap<>();
+    /**
+     * The mission migrations: {@code state def <name> :> MissionMigration { ... }}.
+     *
+     * @param content the model, cleaned ({@link SysMLParserUtils#cleanContent})
+     * @throws IllegalArgumentException if a migration is invalid
+     */
+    public List<Migration> extractMigrations(String content) {
+        List<Migration> migrations = new ArrayList<>();
         Matcher migration = MIGRATION.matcher(content);
         while (migration.find()) {
             String name = migration.group(1);
@@ -72,21 +79,30 @@ public class ReplanningElementExtractor {
             String toMission = require(attributes, "toMission", name);
 
             List<Rule> rules = rules(body, fromMission, toMission, name);
-            migrations.put(name, new Migration(name, require(attributes, "machine", name), fromMission, toMission,
+            migrations.add(new Migration(name, require(attributes, "machine", name), fromMission, toMission,
                     List.copyOf(rules), stringList(attributes.get("waitStates"))));
         }
+        return List.copyOf(migrations);
+    }
 
-        Map<String, MachineStop> stops = new LinkedHashMap<>();
+    /**
+     * The machine stops: {@code state def <name> :> MachineStop { ... }}.
+     *
+     * @param content the model, cleaned ({@link SysMLParserUtils#cleanContent})
+     * @throws IllegalArgumentException if a machine stop is invalid
+     */
+    public List<MachineStop> extractMachineStops(String content) {
+        List<MachineStop> stops = new ArrayList<>();
         Matcher stop = STOP.matcher(content);
         while (stop.find()) {
             String name = stop.group(1);
             String body = blockBody(content, stop.end() - 1);
             Map<String, String> attributes = attributes(body);
             // a rule's "then" names the command: no mission to check it against
-            stops.put(name, new MachineStop(name, require(attributes, "machine", name),
+            stops.add(new MachineStop(name, require(attributes, "machine", name),
                     SysMLParserUtils.cleanValue(attributes.get("direction")), rules(body, null, null, name)));
         }
-        return new SysMLReplanningModel(List.copyOf(strategies), migrations, stops);
+        return List.copyOf(stops);
     }
 
     /** The transitions of {@code body}, as rules: states of {@code fromMission} to states of {@code toMission}. */

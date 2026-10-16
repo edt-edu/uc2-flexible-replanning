@@ -1,6 +1,9 @@
 package mbdo.dt.models;
 
 import mbdo.dt.models.SysMLBehavioralModel.StateMachine;
+import mbdo.dt.models.SysMLReplanningModel.MachineStop;
+import mbdo.dt.models.SysMLReplanningModel.Migration;
+import mbdo.dt.models.SysMLReplanningModel.Strategy;
 import mbdo.dt.models.SysMLStructuralModel.ActionDefinition;
 import mbdo.dt.models.SysMLStructuralModel.AttributeDefinition;
 import mbdo.dt.models.SysMLStructuralModel.CalcDefinition;
@@ -18,7 +21,9 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Entry point for parsing a SysML v2 model file into {@link ParsedSysMLModel}. Cleans the raw
@@ -129,7 +134,12 @@ public class SysMLV2Parser {
      * its anomalies (strategies, and the mission migrations and machine stops they apply to SCADA machines).
      */
     private SysMLReplanningModel parseReplanningModel(String content) {
-        return replanningElementExtractor.extract(content);
+        List<Strategy> strategies = replanningElementExtractor.extractStrategies(content);
+        Map<String, Migration> migrations = new LinkedHashMap<>();
+        replanningElementExtractor.extractMigrations(content).forEach(m -> migrations.put(m.name(), m));
+        Map<String, MachineStop> stops = new LinkedHashMap<>();
+        replanningElementExtractor.extractMachineStops(content).forEach(s -> stops.put(s.name(), s));
+        return new SysMLReplanningModel(strategies, migrations, stops);
     }
 
     public record ParsedSysMLModel(

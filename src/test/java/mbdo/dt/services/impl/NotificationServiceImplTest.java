@@ -78,6 +78,18 @@ class NotificationServiceImplTest {
     }
 
     @Test
+    void aPlanForAnIncidentNoLongerKnownDoesNotOpenItAgain() {
+        notifications.notifyDisruption(anomaly);
+        AnomalyContext other = new AnomalyContext("a-2", T0.plusSeconds(30), "TokenLocation",
+                "TokenDroppedOffAtConveyorBeltFeed", "cb", "TokenDroppedOffAtConveyorBeltFeed",
+                "TokenDroppedOffAtConveyorBeltFeed", "feed departure limit a-2");
+        notifications.notifyDisruption(other); // the registry holds one open incident: a-2's replaces a-1's
+
+        assertFalse(notifications.notifyDisruption(anomaly.withReplanningPlan(plan("cbFailure", Status.WAITING))));
+        assertEquals("feed departure limit a-2", registry.getCurrentIncident().orElseThrow().getMessage());
+    }
+
+    @Test
     void theOperatorClosesTheIncidentAndTheCorrectionIsJournaledAtItsResolutionTime() {
         notifications.notifyDisruption(anomaly);
 

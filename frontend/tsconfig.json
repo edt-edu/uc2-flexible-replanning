@@ -14,10 +14,14 @@
     "esModuleInterop": true,
     "experimentalDecorators": true,
     "moduleResolution": "bundler",
+    "paths": {
+      "@mbdo/machines-svg-map": ["./src/vendor/machines-svg-map/index.ts"]
+    },
     "importHelpers": true,
     "target": "ES2022",
     "module": "ES2022"
   },
+  "exclude": ["src/vendor/machines-svg-map/upstream"],
   "angularCompilerOptions": {
     "enableI18nLegacyMessageIdFormat": false,
     "strictInjectionParameters": true,

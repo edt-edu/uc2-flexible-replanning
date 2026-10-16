@@ -102,6 +102,6 @@ class SysMLReplanningModelTest {
                 }
                 """;
 
-        assertThrows(IllegalArgumentException.class, () -> new ReplanningElementExtractor().extract(SysMLParserUtils.cleanContent(sysml)));
+        assertThrows(IllegalArgumentException.class, () -> new ReplanningElementExtractor().extractMigrations(SysMLParserUtils.cleanContent(sysml)));
     }
 }
